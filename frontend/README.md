@@ -4,7 +4,7 @@ A Streamlit web application that provides an intuitive interface for interacting
 
 ## Features
 
-- **🔮 Single Text Prediction**: Interactive text analysis with real-time results
+- **🔮 Single Text Grading**: Interactive essay grading with real-time results
 - **📊 Batch Evaluation**: CSV file upload for batch processing with metrics
 - **📈 Backend Status**: Real-time monitoring of backend service health
 - **🎯 Concept Analysis**: Joint mode predictions with concept breakdown
@@ -40,26 +40,23 @@ The application will open in your browser at `http://localhost:8501`
 
 ## Usage Guide
 
-### 1. Single Text Prediction
+### 1. Single Text Grading
 
-1. Navigate to the "🔮 Single Prediction" tab
+1. Navigate to the "🔮 Single Grading" tab
 2. Select your preferred model (BERT, GPT-2, RoBERTa, or LSTM)
-3. Choose the mode:
-   - **Standard**: Basic answer quality assessment (binary classification)
-   - **Joint**: Advanced analysis with concept predictions (8 programming concepts)
-4. Enter your programming Q&A text in the text area
-5. Click "🔮 Predict" to get results
+3. Enter your programming Q&A text in the text area
+4. Click "🔮 Grade" to get results
 
 **Results include:**
-- Predicted answer quality (Correct/Incorrect with emoji display)
+- Assigned essay quality rating (with emoji display)
 - Probability distribution chart
 - Confidence score
-- Concept predictions (for joint mode)
+- Concept predictions
 
 ### 2. Batch Evaluation
 
 1. Navigate to the "📊 Batch Evaluation" tab
-2. Select model and mode
+2. Select model
 3. Upload a CSV file with the following format:
    ```csv
    text,label
@@ -87,14 +84,7 @@ The application will open in your browser at `http://localhost:8501`
 ## Configuration
 
 ### Backend URL
-You can configure the backend URL in the sidebar:
-- Default: `http://localhost:8000`
-- Change this if your backend is running on a different host/port
-
-### Connection Status
-The sidebar shows real-time connection status:
-- ✅ **Connected**: Backend is accessible and healthy
-- ❌ **Connection Failed**: Backend is not reachable
+The frontend uses `http://localhost:8000` by default. If needed, update it in `frontend/app.py`.
 
 ## File Format Requirements
 
@@ -115,7 +105,7 @@ text,label
 "Q: What is polymorphism?\nA: I don't know what that means.",0
 ```
 
-## Models and Modes
+## Models and Mode
 
 ### Available Models
 - **bert-base-uncased**: BERT transformer model
@@ -123,12 +113,8 @@ text,label
 - **roberta-base**: RoBERTa transformer model
 - **lstm**: BiLSTM with attention mechanism
 
-### Available Modes
-- **standard**: Standard answer quality classification
-  - Output: 2 classes (0=Incorrect, 1=Correct)
-  - Use case: Binary answer quality assessment
-
-- **joint**: Joint prediction with concept analysis
+### Available Mode
+- **joint**: Grading with concept analysis
   - Output: Answer quality + concept predictions
   - Concepts: FC (Focus), CC (Coherence), TU (Thesis/Unity), CP (Content/Precision), R (Reasoning), DU (Development/Unity), EE (Evidence/Examples), FR (Flow/Readability)
   - Each concept: Negative, Neutral, Positive
@@ -143,10 +129,10 @@ text,label
    - Check if backend URL is correct in sidebar
    - Verify backend is accessible at the specified URL
 
-2. **"Prediction Failed" Error**
+2. **"Grading Failed" Error**
    - Check if the selected model is loaded in backend
    - Verify backend service logs for detailed error messages
-   - Try a different model or mode
+   - Try a different model
 
 3. **CSV Upload Issues**
    - Ensure CSV has 'text' and 'label' columns

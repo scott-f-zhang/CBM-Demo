@@ -5,24 +5,27 @@ Streamlit frontend demo for CBM NLP API service.
 import streamlit as st
 import requests
 import pandas as pd
+import plotly.express as px
+import altair as alt
 import json
 import os
 import glob
 import ast
+import base64
 from typing import Dict, Any, Optional
 from pathlib import Path
 
 
 # Page configuration
 st.set_page_config(
-    page_title="CBM NLP Demo",
+    page_title="EssayCBM",
     page_icon="🤖",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Available modes
-AVAILABLE_MODES = ["standard", "joint"]
+AVAILABLE_MODES = ["joint"]
 
 def get_available_models_from_filesystem() -> list:
     """Dynamically get available models from saved_models/original directory."""
@@ -89,7 +92,7 @@ CONCEPT_FULL_NAMES = {
 }
 
 
-"""Model performance results discovery and loading utilities"""
+# Utilities for results discovery and loading
 # Primary and fallback results directories
 RESULTS_DIR_PRIMARY = "/Users/scott/repos/CBM_NLP/cbm/results"
 try:
@@ -271,21 +274,44 @@ def display_rating_highlight(rating: int, num_classes: int, confidence: float):
     max_rating = num_classes
     confidence_pct = confidence * 100
     
-    # Create prominent display
-    st.markdown("### 🎯 Prediction Result")
-    
-    col1, col2, col3 = st.columns([2, 1, 1])
-    
-    with col1:
-        st.markdown(f"## Rating: **{rating}/{max_rating}**")
-        st.markdown(f"**{format_prediction_icon(rating-1, num_classes)}**")
-    
-    with col2:
-        st.metric("Confidence", f"{confidence_pct:.1f}%")
-    
-    with col3:
-        st.metric("Max Score", max_rating)
+    # Compact, centered card layout with reduced height
+    st.markdown(
+        f"""
+        <div style="min-height:150px; padding:12px 8px; display:flex; align-items:center; justify-content:center;">
+          <div style="text-align:center; max-width:520px; color:#111;">
+            <div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:6px;">
+              <div style="font-size:20px; font-weight:700;">Rating: {rating}/{max_rating}</div>
+              <div style="font-size:24px;">{format_prediction_icon(rating-1, num_classes)}</div>
+            </div>
+            <div style="font-size:14px; color:#555;">
+              <strong>Confidence:</strong> {confidence_pct:.1f}% &nbsp; | &nbsp; <strong>Max Score:</strong> {max_rating}
+            </div>
+          </div> 
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+def display_rating_compact(rating: int, num_classes: int, confidence: float):
+    """Compact, left-aligned rating block for side placement."""
+    max_rating = num_classes
+    confidence_pct = confidence * 100
+    st.markdown(
+        f"""
+        <div style="padding:4px 0; text-align:center;">
+          <div style="font-size:24px; font-weight:800; margin-bottom:8px; color:#111;">
+            Rating: {rating}/{max_rating}
+          </div>
+          <div style="font-size:28px; margin-bottom:10px;">
+            {format_prediction_icon(rating-1, num_classes)}
+          </div>
+          <div style="font-size:16px; color:#555;">
+            <strong>Confidence:</strong> {confidence_pct:.1f}% &nbsp; | &nbsp; <strong>Max Score:</strong> {max_rating}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 def display_probability_chart(probabilities: list, rating: int, num_classes: int, confidence: float):
     """Create 2:8 column layout with rating info on left and horizontal bar chart on right."""
@@ -296,7 +322,7 @@ def display_probability_chart(probabilities: list, rating: int, num_classes: int
     
     with col1:
         st.markdown("**Rating Summary**")
-        st.metric("Predicted Rating", f"{rating}/{num_classes}")
+        st.metric("Assigned Rating", f"{rating}/{num_classes}")
         st.metric("Confidence", f"{confidence*100:.1f}%")
         st.metric("Max Score", num_classes)
         
@@ -306,25 +332,32 @@ def display_probability_chart(probabilities: list, rating: int, num_classes: int
         st.markdown(f"**Probability:** {max(probabilities)*100:.1f}%")
     
     with col2:
-        # Create horizontal bar chart
-        data = {
-            'Score': [f"{i+1}" for i in range(len(probabilities))],
-            'Probability': probabilities
-        }
-        
-        df = pd.DataFrame(data)
-        df = df.set_index('Score')
-        
-        # Display horizontal bar chart
-        st.bar_chart(df, height=300)
+        # Create Plotly bar chart with tooltip and always-visible labels above bars
+        # Ensure all classes 1..num_classes are present on the x-axis
+        num_classes = len(probabilities)
+        all_scores = [str(i + 1) for i in range(num_classes)]
+        df = pd.DataFrame({"Score": all_scores})
+        df["Probability"] = df["Score"].apply(
+            lambda s: float(probabilities[int(s) - 1]) if int(s) - 1 < len(probabilities) else 0.0
+        )
+        fig = px.bar(df, x="Score", y="Probability")
+        fig.update_traces(
+            texttemplate="%{y:.1%}",
+            textposition="outside",
+            hovertemplate="Score: %{x}<br>Probability: %{y:.1%}<extra></extra>"
+        )
+        fig.update_yaxes(range=[0, 1], title_text="Probability")
+        fig.update_xaxes(title_text="Score", categoryorder="array", categoryarray=all_scores)
+        fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10), uniformtext_minsize=10, uniformtext_mode="hide")
+        st.plotly_chart(fig, use_container_width=True)
 
 
-def display_concept_cards(concept_predictions: list):
+def display_concept_cards(concept_predictions: list, show_header: bool = True):
     """Display 8 concept cards in 4 rows x 2 columns with prominent borders and color coding."""
     if not concept_predictions:
         return
-        
-    st.markdown("### 🎯 Concept Analysis")
+    if show_header:
+        st.markdown('<div style="text-align:center;"><h2>🎯 Concept Analysis</h2></div>', unsafe_allow_html=True)
     
     # Color mapping for icons - handle different sentiment labels dynamically
     def get_icon_for_sentiment(sentiment: str) -> str:
@@ -382,193 +415,156 @@ def display_concept_cards(concept_predictions: list):
                         border-radius: 5px;
                         background-color: #f8f9fa;
                     ">
-                        <h4 style="margin: 0 0 5px 0; color: #333;">
-                            {icon} {concept_name}
-                        </h4>
-                        <p style="margin: 0 0 10px 0; color: #666; font-size: 12px;">
-                            {full_name}
-                        </p>
-                        <p style="margin: 5px 0; color: #333;">
-                            <strong>Prediction:</strong> {prediction}
-                        </p>
-                        <p style="margin: 5px 0; color: #666; font-size: 12px;">
-                            <strong>Top:</strong> {top_sentiment} ({top_prob*100:.1f}%)
-                        </p>
+                        <div style="text-align:center; margin: 0 0 2px 0; color: #333;">
+                            <span><strong>{icon} {full_name}</strong></span>
+                        </div>
+                        <div style="text-align:center; color: #888;">
+                            <span><strong>Grading:</strong> {prediction}</span>
+                            &nbsp; | &nbsp;
+                            <span><strong>Top:</strong> {top_sentiment} ({top_prob*100:.1f}%)</span>
+                        </div>
                     </div>
                     """
                     
                     st.markdown(card_html, unsafe_allow_html=True)
                     
-                    # Add bar chart inside the card
-                    concept_data = {
-                        'Sentiment': list(probs.keys()),
-                        'Probability': list(probs.values())
-                    }
-                    
-                    concept_df = pd.DataFrame(concept_data)
-                    concept_df = concept_df.set_index('Sentiment')
-                    
-                    # Display horizontal bar chart with smaller height
-                    st.bar_chart(concept_df, height=150)
-                    
-                    # Add probability details below chart
-                    prob_text = " | ".join([f"{label}: {probs[label]*100:.1f}%" for label in probs.keys()])
-                    st.markdown(f"""
-                    <div style="margin-top: 5px;">
-                        <small style="color: #888;">
-                            {prob_text}
-                        </small>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # Add bar chart with in-bar labels inside the card
+                    # Build dataframe; if labels are numeric 1..5, ensure all five categories appear
+                    sentiment_labels = list(probs.keys())
+                    are_numeric = all(str(k).isdigit() for k in sentiment_labels)
+                    if are_numeric:
+                        full_labels = [str(i) for i in range(1, 6)]
+                        concept_df = pd.DataFrame({
+                            "Sentiment": full_labels,
+                            "Probability": [float(probs.get(lbl, 0.0)) for lbl in full_labels]
+                        })
+                    else:
+                        concept_df = pd.DataFrame({
+                            "Sentiment": sentiment_labels,
+                            "Probability": [probs[k] for k in sentiment_labels]
+                        })
+                    fig = px.bar(concept_df, x="Sentiment", y="Probability")
+                    fig.update_traces(
+                        texttemplate="%{y:.1%}",
+                        textposition="outside",
+                        hovertemplate="Sentiment: %{x}<br>Probability: %{y:.1%}<extra></extra>"
+                    )
+                    fig.update_yaxes(range=[0, 1], title_text=None)
+                    if are_numeric:
+                        fig.update_xaxes(title_text=None, categoryorder="array", categoryarray=[str(i) for i in range(1, 6)])
+                    else:
+                        fig.update_xaxes(title_text=None)
+                    fig.update_layout(height=300, uniformtext_minsize=9, uniformtext_mode="hide")
+                    st.plotly_chart(fig, use_container_width=True)
 
 
 def main():
-    # Title and description
-    st.title("🤖 CBM NLP Demo")
-    st.markdown("**Concept Bottleneck Model for Natural Language Processing**")
-    st.info("📝 This demo uses the Essay dataset for programming answer quality assessment")
-    st.markdown("---")
     
     # Moved model performance section under Predict button in Tab 1
-    
-    # Sidebar configuration
-    st.sidebar.title("⚙️ Configuration")
-    
-    # Backend URL input
-    backend_url = st.sidebar.text_input(
-        "Backend URL",
-        value="http://localhost:8000",
-        help="URL of the FastAPI backend service"
-    )
-    
-    # Connection status
-    st.sidebar.markdown("### 🔗 Connection Status")
+    # Backend config (sidebar removed)
+    backend_url = "http://localhost:8000"
     connection_status = check_backend_connection(backend_url)
-    
-    if connection_status["status"] == "connected":
-        st.sidebar.success("✅ Connected")
-        health_data = connection_status["data"]
-        st.sidebar.json(health_data)
-    else:
-        st.sidebar.error(f"❌ Connection Failed")
-        st.sidebar.error(connection_status["message"])
-        st.sidebar.warning("Make sure the backend service is running!")
-    
-    # Main tabs
-    tab1, tab2 = st.tabs(["🔮 Single Prediction", "📈 Backend Status"])
-    
-    with tab1:
-        st.header("Single Text Prediction")
-        st.markdown("Predict sentiment/rating for a single text input.")
-        
-        if connection_status["status"] != "connected":
-            st.warning("⚠️ Please ensure the backend service is running and accessible.")
-            return
-        
-        # Input form
-        with st.form("prediction_form"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                model_name = st.selectbox(
-                    "Model",
-                    AVAILABLE_MODELS,
-                    help="Select the model to use for prediction"
+    # Columns-based layout (avoid raw HTML wrappers to keep contents inside columns)
+    if connection_status["status"] != "connected":
+        st.warning("⚠️ Please ensure the backend service is running and accessible.")
+        return
+    # Reduce default top padding so content sits higher on the page
+    st.markdown(
+        """
+        <style>
+          [data-testid="stAppViewContainer"] .main .block-container{
+            padding-top: 0.5rem;
+            width: 60%;
+            margin-left: auto;
+            margin-right: auto;
+          }
+          /* Increase textarea font size */
+          [data-testid="stTextArea"] textarea {
+            font-size: 18px !important;
+            line-height: 1.5 !important;
+          }
+          /* Center images rendered via st.image */
+          .stImage img {
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Single-column vertical layout: Enter Essay -> Concept Analysis -> Final Grade
+    with st.container(border=True):
+        # Centered logo above the title inside the main container (robust centering via HTML)
+        try:
+            logo_path = str((Path(__file__).resolve().parent / "assets" / "logo.png"))
+            if os.path.exists(logo_path):
+                with open(logo_path, "rb") as f:
+                    b64_logo = base64.b64encode(f.read()).decode()
+                st.markdown(
+                    f'<div style="text-align:center;"><img src="data:image/png;base64,{b64_logo}" width="160"/></div>',
+                    unsafe_allow_html=True,
                 )
-            
-            with col2:
-                mode = st.radio(
-                    "Mode",
-                    AVAILABLE_MODES,
-                    help="Standard: basic sentiment analysis, Joint: with concept analysis"
-                )
-            
-            text_input = st.text_area(
-                "Text to analyze",
-                value="Q: What is a pointer in C++?\nA: A pointer is a variable that stores the memory address of another variable.",
-                height=100,
-                help="Enter programming Q&A text to analyze"
+        except Exception:
+            pass
+        st.markdown('<div style="text-align:center;"><h2>📝 Essay CBM</h2></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div style="text-align:center; color:#555; font-size:18px; margin-top: 2px;">'
+            'Built for transparent and rubric aligned essay grading.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        # Full-width text input
+        text_input = st.text_area(
+            "Enter Text",
+            value=(
+                "Q: What is a pointer in C++?\n"
+                "A: A pointer is a variable that stores the memory address of another variable. "
+                "It allows indirect access to data and enables dynamic memory management using new/delete."
+            ),
+            height=320,
+            help="Enter essay text to grade",
+            placeholder="Paste or type the essay text here...",
+        )
+        # Controls row
+        ctrl_left, ctrl_right = st.columns([1, 1])
+        with ctrl_left:
+            model_name = st.selectbox(
+                "Model",
+                AVAILABLE_MODELS,
+                help="Select the model to use for grading",
+                label_visibility="collapsed",
             )
-            
-            predict_button = st.form_submit_button("🔮 Predict", use_container_width=True)
-        
-        # Model performance section (moved here under Predict button)
-        st.markdown("### Metrics")
-        with st.expander("Click to view metrics", expanded=False):
-            render_model_performance_section()
-        
-        # Process prediction
-        if predict_button and text_input.strip():
-            with st.spinner("Analyzing text..."):
-                result = predict_single_text(backend_url, text_input, model_name, mode)
-            
-            if result:
-                st.success("✅ Prediction completed!")
-                
-                # Get number of classes and confidence
-                num_classes = len(result['probabilities'])
-                max_probability = max(result['probabilities'])
-                
-                # 1. Prediction Summary (prominent)
-                display_rating_highlight(result['rating'], num_classes, max_probability)
-                
-                # 2. Probability Distribution
-                display_probability_chart(result['probabilities'], result['rating'], num_classes, max_probability)
-                
-                # 3. Concept Analysis (only for joint mode)
-                if result.get("concept_predictions"):
-                    display_concept_cards(result["concept_predictions"])
-                
-                # 4. Raw Model Results (collapsible at bottom)
-                with st.expander("📋 Raw Model Results", expanded=False):
-                    st.json(result)
-    
-    with tab2:
-        st.header("Backend Status")
-        st.markdown("Monitor backend service status and available models.")
-        
-        # Refresh button
-        if st.button("🔄 Refresh Status", use_container_width=True):
-            st.rerun()
-        
-        # Health status
-        st.markdown("### 🏥 Health Status")
-        if connection_status["status"] == "connected":
-            st.success("✅ Backend service is healthy")
-            health_data = connection_status["data"]
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.json(health_data)
-        else:
-            st.error("❌ Backend service is not accessible")
-            st.error(connection_status["message"])
-        
-        # Available models
-        st.markdown("### 🤖 Available Models")
-        models_data = get_available_models(backend_url)
-        
-        if models_data:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**Available Models:**")
-                for model in models_data["available_models"]:
-                    st.write(f"• {model}")
-                
-                st.markdown("**Available Modes:**")
-                for mode in models_data["available_modes"]:
-                    st.write(f"• {mode}")
-            
-            with col2:
-                st.markdown("**Currently Loaded:**")
-                if models_data["loaded_models"]:
-                    for model, modes in models_data["loaded_models"].items():
-                        st.write(f"• **{model}**: {', '.join(modes)}")
-                else:
-                    st.write("No models currently loaded")
-        else:
-            st.warning("⚠️ Could not retrieve model information")
+        with ctrl_right:
+            grade_clicked = st.button("🔮 Grade", use_container_width=True)
+    mode = "joint"
+
+    # Run grading if requested
+    result: Optional[Dict[str, Any]] = None
+    num_classes: Optional[int] = None
+    max_probability: Optional[float] = None
+    if grade_clicked and text_input.strip():
+        with st.spinner("Analyzing text..."):
+            result = predict_single_text(backend_url, text_input, model_name, mode)
+        if result:
+            num_classes = len(result.get("probabilities", [])) or None
+            max_probability = max(result.get("probabilities", [0.0])) if result.get("probabilities") else None
+
+    # Card 2: Concept Analysis (always second)
+    if result and result.get("concept_predictions"):
+        with st.container(border=True):
+            st.markdown('<div style="text-align:center;"><h2>🎯 Concept Analysis</h2></div>', unsafe_allow_html=True)
+            display_concept_cards(result["concept_predictions"], show_header=False)
+    # Before grading: do not render Concept Analysis card
+
+    # Card 3: Final Grade (always third; only after grading)
+    if result and (num_classes is not None) and (max_probability is not None):
+        with st.container(border=True):
+            st.markdown('<div style="text-align:center;"><h2>🎯 Final Grade</h2></div>', unsafe_allow_html=True)
+            display_rating_compact(result["rating"], num_classes, max_probability)
+
+    # Final Grade no longer rendered in the left column
 
 
 if __name__ == "__main__":
