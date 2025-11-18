@@ -1,33 +1,42 @@
-CBM Demo - Quick Start
+# CBM Demo — Quick Start
 
-Prerequisites
+## Prerequisites
 - Python 3.9+ recommended
-- Ensure models exist under `saved_models/` (e.g., `saved_models/essay/...`)
+- Models available under `saved_models/` (e.g., `saved_models/essay/...`)
 
-Backend (FastAPI)
-1) Create and activate a virtual environment (optional)
-   - macOS/Linux:
-     - `python3 -m venv .venv && source .venv/bin/activate`
-   - Windows (PowerShell):
-     - `python -m venv .venv; .\.venv\Scripts\Activate.ps1`
-2) Install dependencies:
-   - `cd backend`
-   - `pip install -r requirements.txt`
-3) Start the API:
-   - `uvicorn main:app --reload`  (recommended), or
-   - `python main.py`
-4) Open API docs: `http://localhost:8000/docs`
+## Backend (FastAPI)
+macOS/Linux:
 
-Frontend (Streamlit)
-1) In a separate shell, create/activate venv if needed (or reuse):
-2) Install dependencies:
-   - `cd frontend`
-   - `pip install -r requirements.txt`
-3) Start the UI:
-   - `streamlit run app.py`
-4) Open UI: `http://localhost:8501`
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload  # or: python main.py
+```
 
-Notes
-- The frontend expects the backend at `http://localhost:8000`.
-- If you change ports, update the frontend code accordingly.
+Windows (PowerShell):
 
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn main:app --reload  # or: python main.py
+```
+
+Open API docs: `http://localhost:8000/docs`
+
+## Frontend (Streamlit)
+
+```bash
+cd frontend
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+Open UI: `http://localhost:8501`
+
+## Notes
+- Frontend expects the backend at `http://localhost:8000`.
+- Ensure `saved_models/` exists; adjust dataset selection in `backend/main.py` if needed.
