@@ -1,5 +1,0 @@
-dataset,data_type,function,model,score,concept_score
-essay,D,PLMs,bert-base-uncased,"[(0.6069364161849711, 0.6778845319237684)]",[]
-essay,D,PLMs,roberta-base,"[(0.6225433526011561, 0.6858059737515779)]",[]
-essay,D,CBE-PLMs,bert-base-uncased,"[(0.6144508670520231, 0.6777515937624802)]","[(0.541907514450867, 0.6693764699316246)]"
-essay,D,CBE-PLMs,roberta-base,"[(0.6456647398843931, 0.7155747685819076)]","[(0.6002167630057803, 0.711021580438518)]"
