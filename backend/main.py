@@ -12,11 +12,24 @@ from fastapi.responses import JSONResponse
 
 from models import (
     PredictRequest, PredictResponse, EvaluateResponse, 
-    HealthResponse, ModelsResponse, ConceptPrediction
+    HealthResponse, ModelsResponse, ConceptPrediction,
+    RegisterRequest, LoginRequest, SimpleOK,
+    SaveGradeRequest, GradeRecordSummary, GradeRecordDetail, GradeHistoryListResponse
 )
 from model_manager import model_manager
 from inference import predict_single, evaluate_batch
 from pathlib import Path
+import sqlite3
+from db import (
+    initialize_db,
+    create_demo_user,
+    create_user,
+    verify_user,
+    insert_grade_record,
+    list_grade_records,
+    get_grade_record,
+    delete_grade_record,
+)
 
 # =========================
 # Manual configuration
@@ -29,6 +42,7 @@ os.environ["CBM_DATASET"] = CBM_DATASET
 
 # Project root and model discovery
 PROJECT_ROOT = Path(__file__).parent.parent
+DB_PATH = str(PROJECT_ROOT / "backend" / "data" / "app.db")
 
 def discover_available_models(dataset: str) -> List[str]:
     base_dir = PROJECT_ROOT / "saved_models" / dataset
@@ -64,6 +78,14 @@ async def startup_event():
     print("Starting CBM NLP API service...")
     print(f"Using device: {model_manager.device}")
     model_manager.load_default_models()
+    # Initialize SQLite and seed demo user
+    try:
+        print(f"Initializing SQLite at {DB_PATH} ...")
+        initialize_db(DB_PATH)
+        create_demo_user(DB_PATH)
+        print("Database ready.")
+    except Exception as e:
+        print(f"Database initialization error: {e}")
     print("API service ready!")
 
 
@@ -76,6 +98,99 @@ async def health_check():
         loaded_models=loaded_models
     )
 
+@app.post("/register", response_model=SimpleOK)
+async def register(request: RegisterRequest):
+    """Register a new user."""
+    try:
+        create_user(DB_PATH, request.username, request.password, ignore_exists=False)
+        return SimpleOK(ok=True, message="User created")
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail="Username already exists")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/login", response_model=SimpleOK)
+async def login(request: LoginRequest):
+    """Login by verifying username/password."""
+    try:
+        if verify_user(DB_PATH, request.username, request.password):
+            return SimpleOK(ok=True, message="Login success")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/grade_history/save")
+async def save_grade(request: SaveGradeRequest):
+    """Save a grading record for the user."""
+    try:
+        new_id = insert_grade_record(
+            DB_PATH,
+            request.username,
+            text=request.text,
+            model_name=request.model_name,
+            mode=request.mode,
+            prediction=request.prediction,
+            rating=request.rating,
+            probabilities=request.probabilities,
+            concept_predictions=[cp.dict() for cp in (request.concept_predictions or [])],
+        )
+        return {"id": new_id}
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/grade_history/list", response_model=GradeHistoryListResponse)
+async def grade_history_list(username: str, limit: int = 20, offset: int = 0):
+    """List recent grade summaries for a user."""
+    try:
+        items = list_grade_records(DB_PATH, username, limit=limit, offset=offset)
+        # Coerce to Pydantic summaries
+        summaries = [GradeRecordSummary(**item) for item in items]
+        return GradeHistoryListResponse(items=summaries)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/grade_history/detail", response_model=GradeRecordDetail)
+async def grade_history_detail(username: str, id: int):
+    """Get detail of a specific grade record for a user."""
+    try:
+        data = get_grade_record(DB_PATH, username, id)
+        if not data:
+            raise HTTPException(status_code=404, detail="Record not found")
+        # Pydantic will validate and coerce
+        return GradeRecordDetail(**data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/grade_history/delete", response_model=SimpleOK)
+async def grade_history_delete(request: Dict[str, Any]):
+    """
+    Delete a specific grade record for a user.
+    Body: { "username": "...", "id": 123 }
+    """
+    try:
+        username = request.get("username")
+        record_id = request.get("id")
+        if not isinstance(username, str) or not isinstance(record_id, int):
+            raise HTTPException(status_code=400, detail="username (str) and id (int) required")
+        ok = delete_grade_record(DB_PATH, username, int(record_id))
+        if not ok:
+            raise HTTPException(status_code=404, detail="Record not found")
+        return SimpleOK(ok=True, message="Deleted")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/models", response_model=ModelsResponse)
 async def get_models():

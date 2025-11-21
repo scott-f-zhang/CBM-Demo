@@ -202,8 +202,8 @@ class ModelManager:
         for model_name, mode in default_models:
             try:
                 print(f"Loading {model_name} in {mode} mode...")
+                # Load models only; defer tokenizer to first request to avoid slow downloads at startup
                 self.get_model(model_name, mode)
-                self.get_tokenizer(model_name)
                 print(f"✓ {model_name} ({mode}) loaded successfully")
             except Exception as e:
                 print(f"✗ Failed to load {model_name} ({mode}): {e}")

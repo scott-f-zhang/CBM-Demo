@@ -52,3 +52,63 @@ class ModelsResponse(BaseModel):
     available_models: List[str] = Field(..., description="Available model names")
     available_modes: List[str] = Field(..., description="Available modes")
     loaded_models: Dict[str, List[str]] = Field(..., description="Currently loaded models")
+
+
+# =========================
+# Auth & History Schemas
+# =========================
+
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class SimpleOK(BaseModel):
+    ok: bool
+    message: Optional[str] = None
+
+
+class SaveGradeRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    text: str = Field(..., min_length=1)
+    model_name: str = Field(..., min_length=1)
+    mode: str = Field(..., min_length=1)
+    prediction: int
+    rating: int
+    probabilities: List[float]
+    concept_predictions: Optional[List[ConceptPrediction]] = None
+
+
+class GradeRecordSummary(BaseModel):
+    id: int
+    created_at: str
+    model_name: str
+    mode: str
+    rating: int
+    text_preview: str
+
+
+class GradeRecordDetail(BaseModel):
+    id: int
+    created_at: str
+    model_name: str
+    mode: str
+    prediction: int
+    rating: int
+    text: str
+    probabilities: List[float]
+    concept_predictions: Optional[List[ConceptPrediction]] = None
+
+
+class GradeHistoryListResponse(BaseModel):
+    items: List[GradeRecordSummary]
+
+
+class DeleteGradeRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    id: int

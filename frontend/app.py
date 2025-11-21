@@ -14,14 +14,16 @@ import ast
 import base64
 from typing import Dict, Any, Optional
 from pathlib import Path
+from datetime import datetime
+from typing import List
 
 
 # Page configuration
 st.set_page_config(
     page_title="EssayCBM",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    page_icon=None,
+    layout="centered",
+    initial_sidebar_state="expanded"
 )
 
 # Available modes
@@ -238,6 +240,81 @@ def get_available_models(base_url: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def api_register(base_url: str, username: str, password: str) -> bool:
+    try:
+        resp = requests.post(f"{base_url}/register", json={"username": username, "password": password}, timeout=10)
+        if resp.status_code == 200:
+            return True
+        if resp.status_code == 409:
+            st.warning("Username already exists.")
+            return False
+        st.error(f"Register failed: {resp.text}")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Connection error: {str(e)}")
+        return False
+
+
+def api_login(base_url: str, username: str, password: str) -> bool:
+    try:
+        resp = requests.post(f"{base_url}/login", json={"username": username, "password": password}, timeout=10)
+        if resp.status_code == 200 and resp.json().get("ok"):
+            return True
+        st.error("Invalid credentials.")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Connection error: {str(e)}")
+        return False
+
+
+def api_save_grade(base_url: str, payload: Dict[str, Any]) -> Optional[int]:
+    try:
+        resp = requests.post(f"{base_url}/grade_history/save", json=payload, timeout=20)
+        if resp.status_code == 200:
+            return int(resp.json().get("id"))
+        st.error(f"Save history failed: {resp.text}")
+        return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Connection error: {str(e)}")
+        return None
+
+
+def api_list_history(base_url: str, username: str, limit: int = 20) -> list:
+    try:
+        resp = requests.get(f"{base_url}/grade_history/list", params={"username": username, "limit": limit}, timeout=10)
+        if resp.status_code == 200:
+            return resp.json().get("items", [])
+        st.error(f"Load history failed: {resp.text}")
+        return []
+    except requests.exceptions.RequestException as e:
+        st.error(f"Connection error: {str(e)}")
+        return []
+
+
+def api_get_history_detail(base_url: str, username: str, record_id: int) -> Optional[Dict[str, Any]]:
+    try:
+        resp = requests.get(f"{base_url}/grade_history/detail", params={"username": username, "id": record_id}, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+        st.error(f"Load detail failed: {resp.text}")
+        return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Connection error: {str(e)}")
+        return None
+
+
+def api_delete_history(base_url: str, username: str, record_id: int) -> bool:
+    try:
+        resp = requests.post(f"{base_url}/grade_history/delete", json={"username": username, "id": record_id}, timeout=10)
+        if resp.status_code == 200:
+            return True
+        st.error(f"Delete failed: {resp.text}")
+        return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"Connection error: {str(e)}")
+        return False
+
+
 def predict_single_text(base_url: str, text: str, model_name: str, mode: str) -> Optional[Dict[str, Any]]:
     """Send prediction request to backend."""
     try:
@@ -261,12 +338,7 @@ def predict_single_text(base_url: str, text: str, model_name: str, mode: str) ->
 
 def format_prediction_icon(prediction: int, num_classes: int) -> str:
     """Format prediction icon based on number of classes."""
-    if num_classes == 2:
-        return "✅" if prediction == 1 else "❌"
-    elif num_classes == 6:
-        return "📝" + "⭐" * (prediction + 1)  # Essay scoring with stars
-    else:
-        return "⭐" * (prediction + 1)
+    return ""
 
 
 def display_rating_highlight(rating: int, num_classes: int, confidence: float):
@@ -281,7 +353,7 @@ def display_rating_highlight(rating: int, num_classes: int, confidence: float):
           <div style="text-align:center; max-width:520px; color:#111;">
             <div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:6px;">
               <div style="font-size:20px; font-weight:700;">Rating: {rating}/{max_rating}</div>
-              <div style="font-size:24px;">{format_prediction_icon(rating-1, num_classes)}</div>
+              <div style="font-size:24px;">{"⭐" * rating if num_classes == 6 else ""}</div>
             </div>
             <div style="font-size:14px; color:#555;">
               <strong>Confidence:</strong> {confidence_pct:.1f}% &nbsp; | &nbsp; <strong>Max Score:</strong> {max_rating}
@@ -303,7 +375,7 @@ def display_rating_compact(rating: int, num_classes: int, confidence: float):
             Rating: {rating}/{max_rating}
           </div>
           <div style="font-size:28px; margin-bottom:10px;">
-            {format_prediction_icon(rating-1, num_classes)}
+            {"⭐" * rating if num_classes == 6 else ""}
           </div>
           <div style="font-size:16px; color:#555;">
             <strong>Confidence:</strong> {confidence_pct:.1f}% &nbsp; | &nbsp; <strong>Max Score:</strong> {max_rating}
@@ -315,7 +387,7 @@ def display_rating_compact(rating: int, num_classes: int, confidence: float):
 
 def display_probability_chart(probabilities: list, rating: int, num_classes: int, confidence: float):
     """Create 2:8 column layout with rating info on left and horizontal bar chart on right."""
-    st.markdown("### 📊 Probability Distribution")
+    st.markdown("### Probability Distribution")
     
     # Create 2:8 column layout
     col1, col2 = st.columns([2, 8])
@@ -353,11 +425,11 @@ def display_probability_chart(probabilities: list, rating: int, num_classes: int
 
 
 def display_concept_cards(concept_predictions: list, show_header: bool = True):
-    """Display 8 concept cards in 4 rows x 2 columns with prominent borders and color coding."""
+    """Display concept cards with 2 cards per row."""
     if not concept_predictions:
         return
     if show_header:
-        st.markdown('<div style="text-align:center;"><h2>🎯 Concept Analysis</h2></div>', unsafe_allow_html=True)
+        st.markdown('<div style="text-align:center;"><h2>Concept Analysis</h2></div>', unsafe_allow_html=True)
     
     # Color mapping for icons - handle different sentiment labels dynamically
     def get_icon_for_sentiment(sentiment: str) -> str:
@@ -368,11 +440,11 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True):
         if sentiment.isdigit():
             score = int(sentiment)
             if score <= 2:
-                return "🔴"  # Low scores (1-2)
+                return "🔴"
             elif score == 3:
-                return "🟡"  # Medium score (3)
+                return "🟡"
             else:
-                return "🟢"  # High scores (4-5)
+                return "🟢"
         
         # Handle text labels
         if any(word in sentiment_lower for word in ['negative', 'low', 'very low']):
@@ -382,18 +454,17 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True):
         elif any(word in sentiment_lower for word in ['positive', 'high', 'very high']):
             return "🟢"
         else:
-            return "⚪"  # Default for unknown labels
+            return ""
     
-    # Display cards in 2 rows, 4 cards per row
-    for row in range(2):
-        cols = st.columns(4)
-        
-        for col_idx in range(4):
-            concept_idx = row * 4 + col_idx
+    # Display cards with 2 per row
+    per_row = 2
+    for start in range(0, len(concept_predictions), per_row):
+        cols = st.columns(per_row)
+        for j in range(per_row):
+            concept_idx = start + j
             if concept_idx < len(concept_predictions):
                 concept = concept_predictions[concept_idx]
-                
-                with cols[col_idx]:
+                with cols[j]:
                     # Get concept info
                     concept_name = concept['concept_name']
                     full_name = CONCEPT_FULL_NAMES.get(concept_name, concept_name)
@@ -456,88 +527,241 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True):
                         fig.update_xaxes(title_text=None)
                     fig.update_layout(height=300, uniformtext_minsize=9, uniformtext_mode="hide")
                     st.plotly_chart(fig, use_container_width=True)
+        # Add a subtle divider between rows
+        if start + per_row < len(concept_predictions):
+            st.markdown(
+                "<hr style='border:0; border-top:1px solid #b5b5b5; margin: 6px 0;'/>",
+                unsafe_allow_html=True,
+            )
 
 
 def main():
     
     # Moved model performance section under Predict button in Tab 1
     # Backend config (sidebar removed)
+    # Restore username from URL query params if present
+    if "username" not in st.session_state:
+        restored_user = None
+        try:
+            qp = st.query_params  # new API
+            restored_user = qp.get("u")
+            if isinstance(restored_user, list):
+                restored_user = restored_user[0] if restored_user else None
+        except Exception:
+            try:
+                qp = st.experimental_get_query_params()  # fallback API
+                ulist: Optional[List[str]] = qp.get("u")
+                restored_user = ulist[0] if ulist else None
+            except Exception:
+                restored_user = None
+        if restored_user:
+            st.session_state["username"] = restored_user
+    
     backend_url = "http://localhost:8000"
     connection_status = check_backend_connection(backend_url)
     # Columns-based layout (avoid raw HTML wrappers to keep contents inside columns)
     if connection_status["status"] != "connected":
         st.warning("⚠️ Please ensure the backend service is running and accessible.")
         return
-    # Reduce default top padding so content sits higher on the page
-    st.markdown(
-        """
-        <style>
-          [data-testid="stAppViewContainer"] .main .block-container{
-            padding-top: 0.5rem;
-            width: 60%;
-            margin-left: auto;
-            margin-right: auto;
-          }
-          /* Increase textarea font size */
-          [data-testid="stTextArea"] textarea {
-            font-size: 18px !important;
-            line-height: 1.5 !important;
-          }
-          /* Center images rendered via st.image */
-          .stImage img {
-            display: block;
-            margin-left: auto;
-            margin-right: auto;
-          }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Reduce default top padding so content sits higher on the page (apply after login)
+    if "username" in st.session_state:
+        st.markdown(
+            """
+            <style>
+              [data-testid="stAppViewContainer"] .main .block-container{
+                padding-top: 0.5rem;
+                width: 60%;
+                margin-left: auto;
+                margin-right: auto;
+              }
+              /* Increase textarea font size */
+              [data-testid="stTextArea"] textarea {
+                font-size: 18px !important;
+                line-height: 1.5 !important;
+              }
+              /* Center images rendered via st.image */
+              .stImage img {
+                display: block;
+                margin-left: auto;
+                margin-right: auto;
+              }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    # Single-column vertical layout: Enter Essay -> Concept Analysis -> Final Grade
-    with st.container(border=True):
-        # Centered logo above the title inside the main container (robust centering via HTML)
+    # Authentication gate
+    if "username" not in st.session_state:
+        # Native layout: center the login box to half width using columns
+        col_left, col_center, col_right = st.columns([1, 2, 1])
+        with col_center:
+            with st.container(border=True):
+                # Logo on login screen
+                try:
+                    logo_path = str((Path(__file__).resolve().parent / "assets" / "logo.png"))
+                    if os.path.exists(logo_path):
+                        with open(logo_path, "rb") as f:
+                            b64_logo = base64.b64encode(f.read()).decode()
+                        st.markdown(
+                            f'<div style="text-align:center;"><img src="data:image/png;base64,{b64_logo}" width="160"/></div>',
+                            unsafe_allow_html=True,
+                        )
+                except Exception:
+                    pass
+                st.markdown('<div style="text-align:center;"><h2>Login to Essay CBM</h2></div>', unsafe_allow_html=True)
+                u = st.text_input("Username")
+                p = st.text_input("Password", type="password")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("Login", use_container_width=True):
+                        if u and p and api_login(backend_url, u, p):
+                            st.session_state["username"] = u
+                            # Persist username in URL query params
+                            try:
+                                # New API (Streamlit >=1.32)
+                                st.query_params["u"] = u
+                            except Exception:
+                                # Fallback API
+                                try:
+                                    st.experimental_set_query_params(u=u)
+                                except Exception:
+                                    pass
+                            st.rerun()
+                with col_b:
+                    if st.button("Register", use_container_width=True):
+                        if u and p and api_register(backend_url, u, p):
+                            st.success("Registration successful. Please login.")
+        return
+
+    # Top bar: logo + user info (no border)
+    with st.container():
         try:
             logo_path = str((Path(__file__).resolve().parent / "assets" / "logo.png"))
             if os.path.exists(logo_path):
                 with open(logo_path, "rb") as f:
                     b64_logo = base64.b64encode(f.read()).decode()
-                st.markdown(
-                    f'<div style="text-align:center;"><img src="data:image/png;base64,{b64_logo}" width="160"/></div>',
-                    unsafe_allow_html=True,
-                )
+                # st.markdown(
+                #     f'<div style="text-align:center;"><img src="data:image/png;base64,{b64_logo}" width="160"/></div>',
+                #     unsafe_allow_html=True,
+                # )
         except Exception:
             pass
-        st.markdown('<div style="text-align:center;"><h2>📝 Essay CBM</h2></div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div style="text-align:center; color:#555; font-size:18px; margin-top: 2px;">'
-            'Built for transparent and rubric aligned essay grading.'
-            '</div>',
+        # Sidebar: title + welcome + logout + history
+        st.sidebar.markdown(
+            f'# 👋 Welcome back! {st.session_state["username"].title()}',
             unsafe_allow_html=True,
         )
+        if st.sidebar.button("Logout"):
+            st.session_state.clear()
+            # Clear username from URL query params
+            try:
+                # New API
+                st.query_params.clear()
+            except Exception:
+                # Fallback clears all params
+                st.experimental_set_query_params()
+            st.rerun()
+        st.sidebar.markdown("### History")
+        if "history_summaries" not in st.session_state:
+            st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"])
+        # Refresh control
+        # ctrl_col1, ctrl_col2 = st.sidebar.columns(2)
+        # with ctrl_col1:
+        #     if st.sidebar.button("Refresh history"):
+        #         st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"])
+        # No edit toggle; delete buttons always visible
+        # Left-align sidebar buttons (history rows)
+        st.markdown(
+            """
+            <style>
+              [data-testid="stSidebar"] .stButton > button {
+                justify-content: flex-start;
+                text-align: left;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                width: 100%;
+                max-width: 100%;
+              }
+              /* Narrower sidebar width to fit current content */
+              section[data-testid="stSidebar"] {
+                min-width: 320px !important;
+                max-width: 350px !important;
+              }
+              section[data-testid="stSidebar"] > div:first-child {
+                width: 100% !important;
+              }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        summaries = st.session_state.get("history_summaries", [])
+        if summaries:
+            # Render row-based list with per-item select and always-visible delete
+            for it in summaries:
+                row_cols = st.sidebar.columns([6, 1])
+                label = f'#{it["id"]}-{it["text_preview"][:30]}'
+                with row_cols[0]:
+                    if st.button(label, key=f"sel_{it['id']}", use_container_width=True):
+                        detail = api_get_history_detail(backend_url, st.session_state["username"], int(it["id"]))
+                        if detail:
+                            st.session_state["essay_text"] = detail.get("text", "")
+                            st.session_state["loaded_result"] = {
+                                "rating": detail.get("rating"),
+                                "probabilities": detail.get("probabilities", []),
+                                "concept_predictions": detail.get("concept_predictions"),
+                            }
+                            # Restore model selection if available
+                            try:
+                                hist_model = detail.get("model_name")
+                                if hist_model and hist_model in AVAILABLE_MODELS:
+                                    st.session_state["model_select"] = hist_model
+                            except Exception:
+                                pass
+                            st.rerun()
+                with row_cols[1]:
+                    if st.button("x", key=f"del_{it['id']}"):
+                        if api_delete_history(backend_url, st.session_state["username"], int(it["id"])):
+                            st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"])
+                            st.session_state.pop("loaded_result", None)
+                            st.rerun()
+
+    # Initialize text state
+    if "essay_text" not in st.session_state:
+        st.session_state["essay_text"] = (
+            "Q: What is a pointer in C++?\n"
+            "A: A pointer is a variable that stores the memory address of another variable. "
+            "It allows indirect access to data and enables dynamic memory management using new/delete."
+        )
+
+    # Single-column vertical layout: Enter Essay -> Concept Analysis -> Final Grade
+
+    with st.expander("Enter Essay", expanded=True):
         # Full-width text input
         text_input = st.text_area(
-            "Enter Text",
-            value=(
-                "Q: What is a pointer in C++?\n"
-                "A: A pointer is a variable that stores the memory address of another variable. "
-                "It allows indirect access to data and enables dynamic memory management using new/delete."
-            ),
+            "Enter Essay",
+            value=st.session_state.get("essay_text", ""),
             height=320,
             help="Enter essay text to grade",
             placeholder="Paste or type the essay text here...",
+            label_visibility="collapsed",
         )
+        st.session_state["essay_text"] = text_input
         # Controls row
         ctrl_left, ctrl_right = st.columns([1, 1])
+        # Ensure model select state has a default
+        if "model_select" not in st.session_state and AVAILABLE_MODELS:
+            st.session_state["model_select"] = AVAILABLE_MODELS[0]
         with ctrl_left:
             model_name = st.selectbox(
                 "Model",
                 AVAILABLE_MODELS,
                 help="Select the model to use for grading",
                 label_visibility="collapsed",
+                key="model_select",
             )
         with ctrl_right:
-            grade_clicked = st.button("🔮 Grade", use_container_width=True)
+            grade_clicked = st.button("Grade", use_container_width=True)
     mode = "joint"
 
     # Run grading if requested
@@ -548,21 +772,51 @@ def main():
         with st.spinner("Analyzing text..."):
             result = predict_single_text(backend_url, text_input, model_name, mode)
         if result:
+            # Save to history
+            payload = {
+                "username": st.session_state["username"],
+                "text": text_input,
+                "model_name": model_name,
+                "mode": mode,
+                "prediction": result.get("prediction"),
+                "rating": result.get("rating"),
+                "probabilities": result.get("probabilities", []),
+                "concept_predictions": result.get("concept_predictions"),
+            }
+            new_id = api_save_grade(backend_url, payload)
+            if new_id is not None:
+                st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"])
+                # Force a rerun so the sidebar history reflects the newly saved record immediately
+                # Persist latest result so it stays visible after rerun
+                st.session_state["loaded_result"] = {
+                    "rating": result.get("rating"),
+                    "probabilities": result.get("probabilities", []),
+                    "concept_predictions": result.get("concept_predictions"),
+                }
+                st.rerun()
             num_classes = len(result.get("probabilities", [])) or None
             max_probability = max(result.get("probabilities", [0.0])) if result.get("probabilities") else None
 
+    # If a history record was loaded from sidebar, prepare its values for display
+    display_result = result
+    if display_result is None and st.session_state.get("loaded_result"):
+        display_result = st.session_state.get("loaded_result")
+        if display_result:
+            num_classes = len(display_result.get("probabilities", [])) or None
+            max_probability = max(display_result.get("probabilities", [0.0])) if display_result.get("probabilities") else None
+
     # Card 2: Concept Analysis (always second)
-    if result and result.get("concept_predictions"):
-        with st.container(border=True):
-            st.markdown('<div style="text-align:center;"><h2>🎯 Concept Analysis</h2></div>', unsafe_allow_html=True)
-            display_concept_cards(result["concept_predictions"], show_header=False)
+    if display_result and display_result.get("concept_predictions"):
+        st.markdown("### Concept Analysis")
+        with st.expander("", expanded=True):
+            display_concept_cards(display_result["concept_predictions"], show_header=False)
     # Before grading: do not render Concept Analysis card
 
     # Card 3: Final Grade (always third; only after grading)
-    if result and (num_classes is not None) and (max_probability is not None):
-        with st.container(border=True):
-            st.markdown('<div style="text-align:center;"><h2>🎯 Final Grade</h2></div>', unsafe_allow_html=True)
-            display_rating_compact(result["rating"], num_classes, max_probability)
+    if display_result and (num_classes is not None) and (max_probability is not None):
+        st.markdown("### Final Grade")
+        with st.expander("", expanded=True):
+            display_rating_compact(display_result["rating"], num_classes, max_probability)
 
     # Final Grade no longer rendered in the left column
 
