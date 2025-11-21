@@ -14,10 +14,11 @@ from models import (
     PredictRequest, PredictResponse, EvaluateResponse, 
     HealthResponse, ModelsResponse, ConceptPrediction,
     RegisterRequest, LoginRequest, SimpleOK,
-    SaveGradeRequest, GradeRecordSummary, GradeRecordDetail, GradeHistoryListResponse
+    SaveGradeRequest, GradeRecordSummary, GradeRecordDetail, GradeHistoryListResponse,
+    PredictWithConceptsRequest, PredictWithConceptsResponse
 )
 from model_manager import model_manager
-from inference import predict_single, evaluate_batch
+from inference import predict_single, evaluate_batch, predict_with_edited_concepts
 from pathlib import Path
 import sqlite3
 from db import (
@@ -82,7 +83,7 @@ async def startup_event():
     try:
         print(f"Initializing SQLite at {DB_PATH} ...")
         initialize_db(DB_PATH)
-        create_demo_user(DB_PATH)
+        # create_demo_user(DB_PATH) # Disabled: Do not create demo user automatically
         print("Database ready.")
     except Exception as e:
         print(f"Database initialization error: {e}")
@@ -102,19 +103,19 @@ async def health_check():
 async def register(request: RegisterRequest):
     """Register a new user."""
     try:
-        create_user(DB_PATH, request.username, request.password, ignore_exists=False)
+        create_user(DB_PATH, request.email, request.username, request.password, ignore_exists=False)
         return SimpleOK(ok=True, message="User created")
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="Username already exists")
+        raise HTTPException(status_code=409, detail="Email already exists")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/login", response_model=SimpleOK)
 async def login(request: LoginRequest):
-    """Login by verifying username/password."""
+    """Login by verifying email/password."""
     try:
-        if verify_user(DB_PATH, request.username, request.password):
+        if verify_user(DB_PATH, request.email, request.password):
             return SimpleOK(ok=True, message="Login success")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     except HTTPException:
@@ -137,6 +138,10 @@ async def save_grade(request: SaveGradeRequest):
             rating=request.rating,
             probabilities=request.probabilities,
             concept_predictions=[cp.dict() for cp in (request.concept_predictions or [])],
+            edited_concepts=request.edited_concepts,
+            original_prediction=request.original_prediction,
+            original_rating=request.original_rating,
+            pinned=request.pinned,
         )
         return {"id": new_id}
     except ValueError as ve:
@@ -146,10 +151,10 @@ async def save_grade(request: SaveGradeRequest):
 
 
 @app.get("/grade_history/list", response_model=GradeHistoryListResponse)
-async def grade_history_list(username: str, limit: int = 20, offset: int = 0):
+async def grade_history_list(username: str, limit: int = 20, offset: int = 0, pinned: bool = False):
     """List recent grade summaries for a user."""
     try:
-        items = list_grade_records(DB_PATH, username, limit=limit, offset=offset)
+        items = list_grade_records(DB_PATH, username, limit=limit, offset=offset, pinned=pinned)
         # Coerce to Pydantic summaries
         summaries = [GradeRecordSummary(**item) for item in items]
         return GradeHistoryListResponse(items=summaries)
@@ -323,6 +328,51 @@ async def evaluate(
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}")
 
 
+@app.post("/predict-with-concepts", response_model=PredictWithConceptsResponse)
+async def predict_with_concepts(request: PredictWithConceptsRequest):
+    """Predict final label using edited concept scores, bypassing stage 1 (X->C)."""
+    # Validate model name
+    if request.model_name not in AVAILABLE_MODELS:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid model_name. Available models: {AVAILABLE_MODELS}"
+        )
+    
+    # Validate mode (must be joint)
+    if request.mode != "joint":
+        raise HTTPException(
+            status_code=400, 
+            detail="Mode must be 'joint' for concept editing. Standard mode does not support concepts."
+        )
+    
+    # Validate edited_concepts is not empty
+    if not request.edited_concepts:
+        raise HTTPException(
+            status_code=400,
+            detail="edited_concepts cannot be empty. Please provide at least one edited concept score."
+        )
+    
+    try:
+        # Perform prediction with edited concepts
+        result = predict_with_edited_concepts(
+            text=request.text,
+            model_name=request.model_name,
+            edited_concepts=request.edited_concepts
+        )
+        
+        return PredictWithConceptsResponse(
+            prediction=result['prediction'],
+            rating=result['rating'],
+            probabilities=result['probabilities'],
+            original_prediction=result.get('original_prediction'),
+            original_rating=result.get('original_rating'),
+            edited_concepts=result['edited_concepts']
+        )
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction with edited concepts failed: {str(e)}")
+
+
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
@@ -331,6 +381,7 @@ async def root():
         "version": "1.0.0",
         "endpoints": {
             "predict": "POST /predict - Single text prediction",
+            "predict-with-concepts": "POST /predict-with-concepts - Predict with edited concept scores",
             "evaluate": "POST /evaluate - Batch evaluation with CSV upload",
             "health": "GET /health - Health check",
             "models": "GET /models - Available models",

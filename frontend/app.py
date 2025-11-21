@@ -12,6 +12,7 @@ import os
 import glob
 import ast
 import base64
+import re
 from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
@@ -26,24 +27,35 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+def rerun():
+    """Helper to handle Streamlit rerun across versions."""
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
+
 # Available modes
 AVAILABLE_MODES = ["joint"]
 
 def get_available_models_from_filesystem() -> list:
-    """Dynamically get available models from saved_models/original directory."""
-    models_dir = "/Users/scott/repos/CBM/saved_models/original"
+    """Dynamically get available models from saved_models/essay directory."""
+    try:
+        # Use relative path from this file (frontend/app.py) -> project_root -> saved_models/essay
+        models_dir = str(Path(__file__).resolve().parent.parent / "saved_models" / "essay")
+    except Exception:
+        models_dir = "saved_models/essay"
+
     if not os.path.exists(models_dir):
-        return ["bert-base-uncased", "roberta-base"]  # fallback
-    
+        return ["roberta-base", "bert-base-uncased"]  # fallback
+
     # Get all directories in the models folder
-    model_dirs = [d for d in os.listdir(models_dir) 
-                  if os.path.isdir(os.path.join(models_dir, d))]
-    
+    model_dirs = [d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d))]
+
     # Filter out hidden directories and sort
     model_dirs = [d for d in model_dirs if not d.startswith('.')]
     model_dirs.sort()
-    
-    return model_dirs if model_dirs else ["bert-base-uncased", "roberta-base"]  # fallback
+
+    return model_dirs if model_dirs else ["roberta-base", "bert-base-uncased"]  # fallback
 
 # Get available models dynamically
 AVAILABLE_MODELS = get_available_models_from_filesystem()
@@ -52,14 +64,14 @@ AVAILABLE_MODELS = get_available_models_from_filesystem()
 CONCEPT_FULL_NAMES = {
     # QA Dataset concepts
     "FC": "Focus/Clarity",
-    "CC": "Coherence/Cohesion", 
+    "CC": "Coherence/Cohesion",
     "TU": "Task Understanding",
     "CP": "Critical Thinking",
     "R": "Relevance",
     "DU": "Depth/Understanding",
     "EE": "Evidence/Examples",
     "FR": "Flow/Readability",
-    
+
     # Essay Dataset concepts
     "TC": "Task Completion",
     "UE": "Understanding/Explanation",
@@ -68,8 +80,7 @@ CONCEPT_FULL_NAMES = {
     "VA": "Vocabulary/Accuracy",
     "SV": "Support/Validation",
     "CTD": "Critical Thinking/Depth",
-    "FR": "Flow/Readability",
-    
+
     # CEBaB Dataset concepts
     "Food": "Food Quality",
     "Ambiance": "Ambiance/Atmosphere",
@@ -81,7 +92,7 @@ CONCEPT_FULL_NAMES = {
     "menu_variety": "Menu Variety",
     "waiting_time": "Waiting Time",
     "waiting_area": "Waiting Area",
-    
+
     # IMDB Dataset concepts
     "acting": "Acting Performance",
     "storyline": "Storyline/Plot",
@@ -240,13 +251,13 @@ def get_available_models(base_url: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def api_register(base_url: str, username: str, password: str) -> bool:
+def api_register(base_url: str, email: str, username: str, password: str) -> bool:
     try:
-        resp = requests.post(f"{base_url}/register", json={"username": username, "password": password}, timeout=10)
+        resp = requests.post(f"{base_url}/register", json={"email": email, "username": username, "password": password}, timeout=10)
         if resp.status_code == 200:
             return True
         if resp.status_code == 409:
-            st.warning("Username already exists.")
+            st.warning("Email already exists.")
             return False
         st.error(f"Register failed: {resp.text}")
         return False
@@ -255,9 +266,9 @@ def api_register(base_url: str, username: str, password: str) -> bool:
         return False
 
 
-def api_login(base_url: str, username: str, password: str) -> bool:
+def api_login(base_url: str, email: str, password: str) -> bool:
     try:
-        resp = requests.post(f"{base_url}/login", json={"username": username, "password": password}, timeout=10)
+        resp = requests.post(f"{base_url}/login", json={"email": email, "password": password}, timeout=10)
         if resp.status_code == 200 and resp.json().get("ok"):
             return True
         st.error("Invalid credentials.")
@@ -279,9 +290,9 @@ def api_save_grade(base_url: str, payload: Dict[str, Any]) -> Optional[int]:
         return None
 
 
-def api_list_history(base_url: str, username: str, limit: int = 20) -> list:
+def api_list_history(base_url: str, username: str, limit: int = 20, pinned: bool = False) -> list:
     try:
-        resp = requests.get(f"{base_url}/grade_history/list", params={"username": username, "limit": limit}, timeout=10)
+        resp = requests.get(f"{base_url}/grade_history/list", params={"username": username, "limit": limit, "pinned": pinned}, timeout=10)
         if resp.status_code == 200:
             return resp.json().get("items", [])
         st.error(f"Load history failed: {resp.text}")
@@ -334,6 +345,26 @@ def predict_single_text(base_url: str, text: str, model_name: str, mode: str) ->
         return None
 
 
+def predict_with_edited_concepts(base_url: str, text: Optional[str], model_name: str, edited_concepts: Dict[str, int]) -> Optional[Dict[str, Any]]:
+    """Send prediction request with edited concept scores to backend."""
+    try:
+        payload = {
+            "text": text,
+            "model_name": model_name,
+            "mode": "joint",
+            "edited_concepts": edited_concepts
+        }
+        response = requests.post(f"{base_url}/predict-with-concepts", json=payload, timeout=30)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Prediction with edited concepts failed: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Connection error: {str(e)}")
+        return None
+
+
 
 
 def format_prediction_icon(prediction: int, num_classes: int) -> str:
@@ -345,7 +376,7 @@ def display_rating_highlight(rating: int, num_classes: int, confidence: float):
     """Display rating as large prominent text with confidence."""
     max_rating = num_classes
     confidence_pct = confidence * 100
-    
+
     # Compact, centered card layout with reduced height
     st.markdown(
         f"""
@@ -358,7 +389,7 @@ def display_rating_highlight(rating: int, num_classes: int, confidence: float):
             <div style="font-size:14px; color:#555;">
               <strong>Confidence:</strong> {confidence_pct:.1f}% &nbsp; | &nbsp; <strong>Max Score:</strong> {max_rating}
             </div>
-          </div> 
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -388,21 +419,21 @@ def display_rating_compact(rating: int, num_classes: int, confidence: float):
 def display_probability_chart(probabilities: list, rating: int, num_classes: int, confidence: float):
     """Create 2:8 column layout with rating info on left and horizontal bar chart on right."""
     st.markdown("### Probability Distribution")
-    
+
     # Create 2:8 column layout
     col1, col2 = st.columns([2, 8])
-    
+
     with col1:
         st.markdown("**Rating Summary**")
         st.metric("Assigned Rating", f"{rating}/{num_classes}")
         st.metric("Confidence", f"{confidence*100:.1f}%")
         st.metric("Max Score", num_classes)
-        
+
         # Show highest probability info
         max_prob_idx = probabilities.index(max(probabilities))
         st.markdown(f"**Highest:** Score {max_prob_idx + 1}")
         st.markdown(f"**Probability:** {max(probabilities)*100:.1f}%")
-    
+
     with col2:
         # Create Plotly bar chart with tooltip and always-visible labels above bars
         # Ensure all classes 1..num_classes are present on the x-axis
@@ -424,18 +455,24 @@ def display_probability_chart(probabilities: list, rating: int, num_classes: int
         st.plotly_chart(fig, use_container_width=True)
 
 
-def display_concept_cards(concept_predictions: list, show_header: bool = True):
-    """Display concept cards with 2 cards per row."""
+def display_concept_cards(concept_predictions: list, show_header: bool = True, editable: bool = False,
+                          backend_url: str = "", model_name: str = "", original_text: str = ""):
+    """Display concept cards with 2 cards per row, optionally with editing capability."""
     if not concept_predictions:
         return
+
     if show_header:
         st.markdown('<div style="text-align:center;"><h2>Concept Analysis</h2></div>', unsafe_allow_html=True)
-    
+
+    # Initialize session state for edited concepts if not exists
+    if editable and 'edited_concepts' not in st.session_state:
+        st.session_state['edited_concepts'] = {}
+
     # Color mapping for icons - handle different sentiment labels dynamically
     def get_icon_for_sentiment(sentiment: str) -> str:
         """Get appropriate icon based on sentiment label."""
         sentiment_lower = sentiment.lower()
-        
+
         # Handle numeric labels (1-5 scale)
         if sentiment.isdigit():
             score = int(sentiment)
@@ -445,7 +482,7 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True):
                 return "🟡"
             else:
                 return "🟢"
-        
+
         # Handle text labels
         if any(word in sentiment_lower for word in ['negative', 'low', 'very low']):
             return "🔴"
@@ -455,7 +492,7 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True):
             return "🟢"
         else:
             return ""
-    
+
     # Display cards with 2 per row
     per_row = 2
     for start in range(0, len(concept_predictions), per_row):
@@ -470,14 +507,40 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True):
                     full_name = CONCEPT_FULL_NAMES.get(concept_name, concept_name)
                     prediction = concept['prediction']
                     probs = concept['probabilities']
-                    
+
                     # Get styling
                     icon = get_icon_for_sentiment(prediction)
-                    
+
                     # Get top probability info
                     top_prob = max(probs.values())
                     top_sentiment = max(probs, key=probs.get)
-                    
+
+                    # Determine if this concept has been edited
+                    edited_concepts_map = st.session_state.get('edited_concepts', {})
+                    is_edited = concept_name in edited_concepts_map
+
+                    # Resolve display prediction (original vs edited)
+                    display_prediction = prediction
+                    if is_edited:
+                        edited_val_idx = edited_concepts_map[concept_name]
+                        sentiment_labels = list(probs.keys())
+                        are_numeric = all(str(k).isdigit() for k in sentiment_labels)
+
+                        if are_numeric:
+                            # 0-based index to 1-based label
+                            display_prediction = str(edited_val_idx + 1)
+                        else:
+                            # Text labels mapping
+                            if edited_val_idx == 0: display_prediction = "Negative"
+                            elif edited_val_idx == 1: display_prediction = "Neutral"
+                            elif edited_val_idx == 2: display_prediction = "Positive"
+
+                    # Update icon based on resolved prediction
+                    icon = get_icon_for_sentiment(display_prediction)
+
+                    border_color = "#ff6b6b" if is_edited else "transparent"
+                    border_width = "2px" if is_edited else "0px"
+
                     # Create simple card without borders
                     card_html = f"""
                     <div style="
@@ -485,20 +548,93 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True):
                         margin: 10px 0;
                         border-radius: 5px;
                         background-color: #f8f9fa;
+                        border: {border_width} solid {border_color};
                     ">
                         <div style="text-align:center; margin: 0 0 2px 0; color: #333;">
                             <span><strong>{icon} {full_name}</strong></span>
                         </div>
                         <div style="text-align:center; color: #888;">
-                            <span><strong>Grading:</strong> {prediction}</span>
+                            <span><strong>Grading:</strong> {display_prediction}</span>
                             &nbsp; | &nbsp;
                             <span><strong>Top:</strong> {top_sentiment} ({top_prob*100:.1f}%)</span>
                         </div>
                     </div>
                     """
-                    
+
                     st.markdown(card_html, unsafe_allow_html=True)
-                    
+
+                    # Add edit functionality if editable
+                    if editable:
+                        # Get available options from probabilities
+                        sentiment_labels = list(probs.keys())
+                        are_numeric = all(str(k).isdigit() for k in sentiment_labels)
+
+                        # Create key for this concept's selectbox
+                        selectbox_key = f"edit_{concept_name}_{concept_idx}"
+
+                        # Get current value (edited or original)
+                        # If edited, convert from 0-based (API) to 1-based (display)
+                        edited_value = st.session_state.get('edited_concepts', {}).get(concept_name)
+                        if edited_value is not None:
+                            # Convert from 0-based API format to 1-based display format
+                            current_value = str(edited_value + 1) if are_numeric else prediction
+                        else:
+                            current_value = prediction
+
+                        # Create selectbox for editing
+                        if are_numeric:
+                            # For numeric labels (1-5), show as dropdown
+                            options = sentiment_labels
+                            # Convert current_value to string for comparison
+                            current_value_str = str(current_value)
+                            try:
+                                selected_index = options.index(current_value_str) if current_value_str in options else 0
+                            except ValueError:
+                                selected_index = 0
+                            selected = st.selectbox(
+                                f"Edit {concept_name}",
+                                options=options,
+                                index=selected_index,
+                                key=selectbox_key,
+                                label_visibility="collapsed"
+                            )
+                            # Store edited value (convert "1"-"5" to 0-4 for API)
+                            # Note: API expects 0-based indices, but we display 1-based labels
+                            selected_int = int(selected)
+                            # Check if this is different from original (convert original to int for comparison)
+                            original_int = int(prediction) if prediction.isdigit() else 0
+                            if selected_int != original_int:
+                                if 'edited_concepts' not in st.session_state:
+                                    st.session_state['edited_concepts'] = {}
+                                # Convert "1"-"5" to 0-4 for API
+                                st.session_state['edited_concepts'][concept_name] = selected_int - 1
+                            elif concept_name in st.session_state.get('edited_concepts', {}):
+                                # If user reverts to original, remove from edited dict
+                                del st.session_state['edited_concepts'][concept_name]
+                        else:
+                            # For text labels, show as dropdown
+                            options = sentiment_labels
+                            selected = st.selectbox(
+                                f"Edit {concept_name}",
+                                options=options,
+                                index=options.index(current_value) if current_value in options else 0,
+                                key=selectbox_key,
+                                label_visibility="collapsed"
+                            )
+                            # Store edited value
+                            if selected != prediction:
+                                if 'edited_concepts' not in st.session_state:
+                                    st.session_state['edited_concepts'] = {}
+                                # Convert text label to numeric for API
+                                if selected == 'Negative':
+                                    st.session_state['edited_concepts'][concept_name] = 0
+                                elif selected == 'Neutral':
+                                    st.session_state['edited_concepts'][concept_name] = 1
+                                elif selected == 'Positive':
+                                    st.session_state['edited_concepts'][concept_name] = 2
+                            elif concept_name in st.session_state.get('edited_concepts', {}):
+                                del st.session_state['edited_concepts'][concept_name]
+
                     # Add bar chart with in-bar labels inside the card
                     # Build dataframe; if labels are numeric 1..5, ensure all five categories appear
                     sentiment_labels = list(probs.keys())
@@ -534,9 +670,49 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True):
                 unsafe_allow_html=True,
             )
 
+    # Add "Repredict" button if editable and there are edits
+    if editable and st.session_state.get('edited_concepts'):
+        # Add description text above buttons
+        st.markdown(
+            """
+            <div style="margin: 10px 0; padding: 8px; background-color: #f0f2f6; border-radius: 5px;">
+                <p style="margin: 0; font-size: 12px; color: #666; line-height: 1.5;">
+                    <strong>Regrading:</strong> Re-runs the second stage (C→Y) model using your edited concept scores to generate a new final rating prediction. The original and new predictions will be displayed side-by-side for comparison.<br>
+                    <strong>Reset Edits:</strong> Clears all concept score edits and restores the Original Gradings.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+        with col2:
+            if st.button("Regrading", use_container_width=True, type="primary"):
+                # Call API with edited concepts
+                with st.spinner("Repredicting with edited concepts..."):
+                    result = predict_with_edited_concepts(
+                        backend_url,
+                        original_text,
+                        model_name,
+                        st.session_state['edited_concepts']
+                    )
+                    if result:
+                        # Store result in session state for display
+                        st.session_state['reprediction_result'] = result
+                        # Set flag to indicate we just performed a regrade
+                        st.session_state['just_regraded'] = True
+                        rerun()
+
+        # Show reset button
+        with col3:
+            if st.button("Reset Edits", use_container_width=True):
+                st.session_state['edited_concepts'] = {}
+                if 'reprediction_result' in st.session_state:
+                    del st.session_state['reprediction_result']
+                rerun()
+
 
 def main():
-    
+
     # Moved model performance section under Predict button in Tab 1
     # Backend config (sidebar removed)
     # Restore username from URL query params if present
@@ -556,7 +732,7 @@ def main():
                 restored_user = None
         if restored_user:
             st.session_state["username"] = restored_user
-    
+
     backend_url = "http://localhost:8000"
     connection_status = check_backend_connection(backend_url)
     # Columns-based layout (avoid raw HTML wrappers to keep contents inside columns)
@@ -608,29 +784,68 @@ def main():
                         )
                 except Exception:
                     pass
-                st.markdown('<div style="text-align:center;"><h2>Login to Essay CBM</h2></div>', unsafe_allow_html=True)
-                u = st.text_input("Username")
-                p = st.text_input("Password", type="password")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    if st.button("Login", use_container_width=True):
-                        if u and p and api_login(backend_url, u, p):
-                            st.session_state["username"] = u
-                            # Persist username in URL query params
-                            try:
-                                # New API (Streamlit >=1.32)
-                                st.query_params["u"] = u
-                            except Exception:
-                                # Fallback API
+                st.markdown('<div style="text-align:center;"><h3>Login to Essay CBM</h3></div>', unsafe_allow_html=True)
+
+                def is_valid_email(email: str) -> bool:
+                    pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
+                    return bool(re.match(pattern, email))
+
+                # Form for Login/Register
+                # We need tabs or just dynamic rendering based on action
+                # Let's keep it simple with side-by-side columns but different state?
+                # Actually, standard UI is usually separate tabs.
+
+                # Using session state to toggle between Login and Register
+                if "auth_mode" not in st.session_state:
+                    st.session_state["auth_mode"] = "login"
+
+                if st.session_state["auth_mode"] == "login":
+                    email_login = st.text_input("Email Address", key="login_email")
+                    pass_login = st.text_input("Password", type="password", key="login_pass")
+
+                    col_action, col_toggle = st.columns([1, 1])
+                    with col_action:
+                        if st.button("Login", use_container_width=True):
+                            if not email_login or not pass_login:
+                                st.error("Please enter both email and password.")
+                            elif not is_valid_email(email_login):
+                                st.error("Please enter a valid email address.")
+                            elif api_login(backend_url, email_login, pass_login):
+                                st.session_state["username"] = email_login  # This is now email
                                 try:
-                                    st.experimental_set_query_params(u=u)
+                                    st.query_params["u"] = email_login
                                 except Exception:
-                                    pass
-                            st.rerun()
-                with col_b:
-                    if st.button("Register", use_container_width=True):
-                        if u and p and api_register(backend_url, u, p):
-                            st.success("Registration successful. Please login.")
+                                    try:
+                                        st.experimental_set_query_params(u=email_login)
+                                    except Exception:
+                                        pass
+                                rerun()
+                    with col_toggle:
+                        if st.button("Register", use_container_width=True):
+                            st.session_state["auth_mode"] = "register"
+                            rerun()
+
+                else:
+                    # Register Mode
+                    email_reg = st.text_input("Email Address", key="reg_email")
+                    username_reg = st.text_input("Username", key="reg_username")
+                    pass_reg = st.text_input("Password", type="password", key="reg_pass")
+
+                    col_action, col_toggle = st.columns([1, 1])
+                    with col_action:
+                        if st.button("Register", use_container_width=True, key="btn_register_action"):
+                            if not email_reg or not pass_reg or not username_reg:
+                                st.error("All fields are required.")
+                            elif not is_valid_email(email_reg):
+                                st.error("Please enter a valid email address.")
+                            elif api_register(backend_url, email_reg, username_reg, pass_reg):
+                                st.success("Registration successful. Please login.")
+                                st.session_state["auth_mode"] = "login"
+                                rerun()
+                    with col_toggle:
+                        if st.button("Back to Login", use_container_width=True):
+                            st.session_state["auth_mode"] = "login"
+                            rerun()
         return
 
     # Top bar: logo + user info (no border)
@@ -647,8 +862,18 @@ def main():
         except Exception:
             pass
         # Sidebar: title + welcome + logout + history
+        # Assuming we want to show the username if we have it, or the email username part if not.
+        # Currently st.session_state["username"] stores the email.
+        # We don't have the username stored in session state from login.
+        # Ideally, the login response should return the username.
+        # For now, we'll stick to the email username part unless we update the login API response.
+
+        display_name = st.session_state["username"]
+        if "@" in display_name:
+            display_name = display_name.split("@")[0]
+
         st.sidebar.markdown(
-            f'# 👋 Welcome back! {st.session_state["username"].title()}',
+            f'# 👋 Welcome back! {display_name.title()}',
             unsafe_allow_html=True,
         )
         if st.sidebar.button("Logout"):
@@ -660,15 +885,78 @@ def main():
             except Exception:
                 # Fallback clears all params
                 st.experimental_set_query_params()
-            st.rerun()
+            rerun()
+
+        # Pinned Section
+        st.sidebar.markdown("### Pinned")
+        if "pinned_summaries" not in st.session_state:
+            st.session_state["pinned_summaries"] = api_list_history(backend_url, st.session_state["username"], pinned=True)
+
+        pinned_items = st.session_state.get("pinned_summaries", [])
+        if pinned_items:
+            for it in pinned_items:
+                row_cols = st.sidebar.columns([6, 1])
+                label = f'📌 #{it["id"]}-{it["text_preview"][:25]}'
+                with row_cols[0]:
+                    if st.button(label, key=f"sel_pinned_{it['id']}", use_container_width=True):
+                        detail = api_get_history_detail(backend_url, st.session_state["username"], int(it["id"]))
+                        if detail:
+                            st.session_state["essay_text"] = detail.get("text", "")
+                            # Restore base result
+                            st.session_state["loaded_result"] = {
+                                "rating": detail.get("rating"),
+                                "probabilities": detail.get("probabilities", []),
+                                "concept_predictions": detail.get("concept_predictions"),
+                            }
+
+                            # Restore edited concepts and reprediction if they exist
+                            edited_concepts = detail.get("edited_concepts")
+                            if edited_concepts:
+                                st.session_state['edited_concepts'] = edited_concepts
+                                # If we have edited concepts, the main rating/probs in the record
+                                # correspond to the reprediction. We need to reconstruct the reprediction result object.
+                                st.session_state['reprediction_result'] = {
+                                    'rating': detail.get("rating"),
+                                    'probabilities': detail.get("probabilities", []),
+                                    'original_prediction': detail.get("original_prediction"),
+                                    'original_rating': detail.get("original_rating"),
+                                    'edited_concepts': edited_concepts
+                                }
+                                # Ensure save button doesn't show up for loaded pinned records
+                                st.session_state['just_regraded'] = False
+                                # Mark as pinned loaded to disable editing
+                                st.session_state['is_pinned_loaded'] = True
+                            else:
+                                # If no edits, clear any existing edits
+                                if 'edited_concepts' in st.session_state:
+                                    del st.session_state['edited_concepts']
+                                if 'reprediction_result' in st.session_state:
+                                    del st.session_state['reprediction_result']
+                                st.session_state['is_pinned_loaded'] = True
+
+                            # Restore model selection if available
+                            try:
+                                hist_model = detail.get("model_name")
+                                if hist_model and hist_model in AVAILABLE_MODELS:
+                                    st.session_state["model_select"] = hist_model
+                            except Exception:
+                                pass
+                            rerun()
+                with row_cols[1]:
+                    if st.button("x", key=f"del_pinned_{it['id']}"):
+                        if api_delete_history(backend_url, st.session_state["username"], int(it["id"])):
+                            st.session_state["pinned_summaries"] = api_list_history(backend_url, st.session_state["username"], pinned=True)
+                            st.session_state.pop("loaded_result", None)
+                            rerun()
+
         st.sidebar.markdown("### History")
         if "history_summaries" not in st.session_state:
-            st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"])
+            st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"], pinned=False)
         # Refresh control
         # ctrl_col1, ctrl_col2 = st.sidebar.columns(2)
         # with ctrl_col1:
         #     if st.sidebar.button("Refresh history"):
-        #         st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"])
+        #         st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"], pinned=False)
         # No edit toggle; delete buttons always visible
         # Left-align sidebar buttons (history rows)
         st.markdown(
@@ -711,6 +999,15 @@ def main():
                                 "probabilities": detail.get("probabilities", []),
                                 "concept_predictions": detail.get("concept_predictions"),
                             }
+
+                            # Clear any pinned/edit specific state when loading a regular history item
+                            if 'edited_concepts' in st.session_state:
+                                del st.session_state['edited_concepts']
+                            if 'reprediction_result' in st.session_state:
+                                del st.session_state['reprediction_result']
+                            if 'is_pinned_loaded' in st.session_state:
+                                del st.session_state['is_pinned_loaded']
+
                             # Restore model selection if available
                             try:
                                 hist_model = detail.get("model_name")
@@ -718,13 +1015,13 @@ def main():
                                     st.session_state["model_select"] = hist_model
                             except Exception:
                                 pass
-                            st.rerun()
+                            rerun()
                 with row_cols[1]:
                     if st.button("x", key=f"del_{it['id']}"):
                         if api_delete_history(backend_url, st.session_state["username"], int(it["id"])):
                             st.session_state["history_summaries"] = api_list_history(backend_url, st.session_state["username"])
                             st.session_state.pop("loaded_result", None)
-                            st.rerun()
+                            rerun()
 
     # Initialize text state
     if "essay_text" not in st.session_state:
@@ -793,7 +1090,10 @@ def main():
                     "probabilities": result.get("probabilities", []),
                     "concept_predictions": result.get("concept_predictions"),
                 }
-                st.rerun()
+                # Ensure we are not in pinned mode for new grades
+                if 'is_pinned_loaded' in st.session_state:
+                    del st.session_state['is_pinned_loaded']
+                rerun()
             num_classes = len(result.get("probabilities", [])) or None
             max_probability = max(result.get("probabilities", [0.0])) if result.get("probabilities") else None
 
@@ -809,8 +1109,111 @@ def main():
     if display_result and display_result.get("concept_predictions"):
         st.markdown("### Concept Analysis")
         with st.expander("", expanded=True):
-            display_concept_cards(display_result["concept_predictions"], show_header=False)
-    # Before grading: do not render Concept Analysis card
+            # Enable editing only if we have text input and model_name, AND it's not a loaded pinned record
+            is_pinned = st.session_state.get("is_pinned_loaded", False)
+            editable = bool(text_input.strip() and model_name and mode == "joint" and not is_pinned)
+            if editable:
+                st.markdown(
+                    '<p style="font-size: 11px; color: #888; margin-bottom: 10px; font-style: italic;">💡 <strong>Tip:</strong> You can edit concept scores using the dropdown menus below. Edited concepts will be highlighted with a red border. After editing, click "Regrading" to see how the changes affect the final rating.</p>',
+                    unsafe_allow_html=True
+                )
+            elif is_pinned:
+                st.markdown(
+                    '<p style="font-size: 11px; color: #888; margin-bottom: 10px; font-style: italic;">🔒 <strong>Note:</strong> This is a pinned record and cannot be edited further. To make changes, please create a new grading from the original text.</p>',
+                    unsafe_allow_html=True
+                )
+
+            # Move the concept cards display here
+            display_concept_cards(
+                display_result["concept_predictions"],
+                show_header=False,
+                editable=editable,
+                backend_url=backend_url,
+                model_name=model_name,
+                original_text=text_input if editable else ""
+            )
+
+            # Also check for reprediction result and show comparison logic HERE if needed,
+            # but typically reprediction UI is separate.
+
+    # Check for reprediction result AFTER concept analysis to ensure button visibility isn't blocked by rerun logic inside components
+    reprediction_result = st.session_state.get('reprediction_result')
+    if reprediction_result:
+        # Show comparison between original and reprediction
+        st.markdown("### Regrading Result")
+        with st.expander("", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Original Grading**")
+                if reprediction_result.get('original_rating'):
+                    display_rating_compact(
+                        reprediction_result['original_rating'],
+                        num_classes or len(reprediction_result.get('probabilities', [])),
+                        max(reprediction_result.get('probabilities', [0.0])) if reprediction_result.get('probabilities') else 0.0
+                    )
+            with col2:
+                st.markdown("**Regrading Result**")
+                new_rating = reprediction_result.get('rating')
+                new_probs = reprediction_result.get('probabilities', [])
+                new_max_prob = max(new_probs) if new_probs else 0.0
+                display_rating_compact(
+                    new_rating,
+                    len(new_probs) or num_classes or 6,
+                    new_max_prob
+                )
+
+        # Save button for reprediction result - ensure this is outside any columns that might be rebuilt
+        # Only show save button if edits are present (i.e. session has edited_concepts)
+        # This prevents saving already-pinned records repeatedly unless further edited
+        # Also, check if this specific state is already pinned to avoid showing save for a just-loaded pin
+
+        # Logic: Show save if:
+        # 1. We have edited concepts (user made changes)
+        # 2. We have a reprediction result (Regrading was clicked)
+        # 3. Ideally, we don't want to show it if we just loaded a pin.
+        #    When we load a pin, we restore 'edited_concepts'.
+        #    So we need a way to distinguish "loaded from pin" vs "actively editing".
+        #    A simple heuristic is: if we just loaded a pin, maybe we shouldn't show Save immediately.
+        #    But if user changes something else, we should.
+        #    However, the user requirement is "only when I changed concept score and clicked regrading".
+        #    When we load a pin, we haven't just clicked regrading in *this* session, but we restored state.
+
+        # Let's use a session state flag that is set when "Regrading" is actually clicked.
+        if st.session_state.get("just_regraded", False):
+            if st.button("Save", key="save_reprediction", use_container_width=True):
+                # Prepare payload
+                base_result = st.session_state.get("loaded_result", {})
+
+                payload = {
+                    "username": st.session_state["username"],
+                    "text": st.session_state.get("essay_text", ""),
+                    "model_name": st.session_state.get("model_select", AVAILABLE_MODELS[0]),
+                    "mode": "joint",
+                    "prediction": reprediction_result.get("prediction"),
+                    "rating": reprediction_result.get("rating"),
+                    "probabilities": reprediction_result.get("probabilities", []),
+                    "concept_predictions": base_result.get("concept_predictions"),
+                    "edited_concepts": st.session_state.get("edited_concepts"),
+                    "original_prediction": reprediction_result.get("original_prediction"),
+                    "original_rating": reprediction_result.get("original_rating"),
+                    "pinned": True
+                }
+
+                if api_save_grade(backend_url, payload):
+                    st.success("Record pinned successfully!")
+                    st.session_state["pinned_summaries"] = api_list_history(backend_url, st.session_state["username"], pinned=True)
+                    # Reset the flag so button hides after saving (optional, but good UX)
+                    st.session_state["just_regraded"] = False
+                    rerun()
+
+        # Update display_result to show reprediction result for final grade card
+        display_result = {
+            'rating': reprediction_result.get('rating'),
+            'probabilities': reprediction_result.get('probabilities', []),
+            'concept_predictions': display_result.get('concept_predictions') if display_result else None
+        }
+        num_classes = len(reprediction_result.get('probabilities', [])) or num_classes
+        max_probability = max(reprediction_result.get('probabilities', [0.0])) if reprediction_result.get('probabilities') else max_probability
 
     # Card 3: Final Grade (always third; only after grading)
     if display_result and (num_classes is not None) and (max_probability is not None):

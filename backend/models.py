@@ -59,12 +59,13 @@ class ModelsResponse(BaseModel):
 # =========================
 
 class RegisterRequest(BaseModel):
+    email: str = Field(..., min_length=1)
     username: str = Field(..., min_length=1)
     password: str = Field(..., min_length=1)
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=1)
     password: str = Field(..., min_length=1)
 
 
@@ -82,6 +83,10 @@ class SaveGradeRequest(BaseModel):
     rating: int
     probabilities: List[float]
     concept_predictions: Optional[List[ConceptPrediction]] = None
+    edited_concepts: Optional[Dict[str, int]] = None
+    original_prediction: Optional[int] = None
+    original_rating: Optional[int] = None
+    pinned: bool = False
 
 
 class GradeRecordSummary(BaseModel):
@@ -91,6 +96,7 @@ class GradeRecordSummary(BaseModel):
     mode: str
     rating: int
     text_preview: str
+    pinned: bool = False
 
 
 class GradeRecordDetail(BaseModel):
@@ -103,6 +109,10 @@ class GradeRecordDetail(BaseModel):
     text: str
     probabilities: List[float]
     concept_predictions: Optional[List[ConceptPrediction]] = None
+    edited_concepts: Optional[Dict[str, int]] = None
+    original_prediction: Optional[int] = None
+    original_rating: Optional[int] = None
+    pinned: bool = False
 
 
 class GradeHistoryListResponse(BaseModel):
@@ -112,3 +122,21 @@ class GradeHistoryListResponse(BaseModel):
 class DeleteGradeRequest(BaseModel):
     username: str = Field(..., min_length=1)
     id: int
+
+
+class PredictWithConceptsRequest(BaseModel):
+    """Request model for prediction with edited concept scores."""
+    text: Optional[str] = Field(None, description="Original text (optional, for getting original concept predictions)")
+    model_name: str = Field(..., description="Model name to use")
+    mode: str = Field(..., description="Model mode (must be 'joint')")
+    edited_concepts: Dict[str, int] = Field(..., description="Dictionary of edited concept scores, e.g., {'TC': 4, 'UE': 3}")
+
+
+class PredictWithConceptsResponse(BaseModel):
+    """Response model for prediction with edited concepts."""
+    prediction: int = Field(..., description="Predicted class (0-4)")
+    rating: int = Field(..., description="Predicted rating (1-5 stars)")
+    probabilities: List[float] = Field(..., description="Class probabilities")
+    original_prediction: Optional[int] = Field(None, description="Original prediction before editing")
+    original_rating: Optional[int] = Field(None, description="Original rating before editing")
+    edited_concepts: Dict[str, int] = Field(..., description="The edited concept scores that were used")

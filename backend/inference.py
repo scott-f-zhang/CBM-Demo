@@ -349,3 +349,159 @@ def evaluate_batch(texts: List[str], labels: List[int], model_name: str, mode: s
         result['predictions'] = detailed_predictions
     
     return result
+
+
+def concept_labels_to_logits(concept_labels: List[int], n_attributes: int, n_class_attr: int) -> torch.Tensor:
+    """
+    Convert concept class labels to logits format for stage 2 model input.
+    
+    Args:
+        concept_labels: List of class labels for each concept (e.g., [2, 3, 1, ...])
+        n_attributes: Number of concepts
+        n_class_attr: Number of classes per concept
+    
+    Returns:
+        Tensor of shape (1, n_attributes * n_class_attr) ready for sec_model input
+    """
+    logits_list = []
+    for label in concept_labels:
+        # Create logits with high confidence for the selected class
+        logit = torch.zeros(n_class_attr)
+        if 0 <= label < n_class_attr:
+            logit[label] = 10.0  # High confidence value
+        logits_list.append(logit)
+    
+    # Stack and reshape to match expected input format
+    stacked_logits = torch.stack(logits_list)  # Shape: (n_attributes, n_class_attr)
+    reshaped_logits = stacked_logits.reshape(1, n_attributes * n_class_attr)  # Shape: (1, n_attributes * n_class_attr)
+    return reshaped_logits
+
+
+def predict_with_edited_concepts(text: Optional[str], model_name: str, edited_concepts: Dict[str, int]) -> Dict[str, Any]:
+    """
+    Predict final label using edited concept scores, bypassing stage 1 (X->C).
+    
+    Args:
+        text: Original text (optional, used to get original concept predictions for comparison)
+        model_name: Model name to use
+        edited_concepts: Dictionary mapping concept names to edited class labels (e.g., {'TC': 4, 'UE': 3})
+    
+    Returns:
+        Dictionary with new prediction results and original prediction (if text provided)
+    """
+    # Get model and head (must be joint mode)
+    model, head = model_manager.get_model(model_name, 'joint')
+    
+    # Get dataset configuration
+    if hasattr(head, 'dataset_config'):
+        concept_names = head.dataset_config.get('concepts', ['TC', 'UE', 'OC', 'GM', 'VA', 'SV', 'CTD', 'FR'])
+        concept_vals = head.dataset_config.get('concept_vals', [0, 1, 2, 3, 4])
+    else:
+        # Fallback: assume Essay dataset
+        concept_names = ['TC', 'UE', 'OC', 'GM', 'VA', 'SV', 'CTD', 'FR']
+        concept_vals = [0, 1, 2, 3, 4]
+    
+    n_attributes = len(concept_names)
+    n_class_attr = len(concept_vals)
+    
+    # Get original prediction if text is provided
+    original_prediction = None
+    original_rating = None
+    original_concept_labels = None
+    
+    if text:
+        # Get original prediction for comparison
+        original_result = predict_single(text, model_name, 'joint')
+        original_prediction = original_result['prediction']
+        original_rating = original_result['rating']
+        
+        # Extract original concept labels
+        if original_result.get('concept_predictions'):
+            original_concept_labels = {}
+            for cp in original_result['concept_predictions']:
+                concept_name = cp['concept_name']
+                # Convert prediction string back to label index
+                pred_str = cp['prediction']
+                if pred_str.isdigit():
+                    original_concept_labels[concept_name] = int(pred_str) - 1  # Convert "1"-"5" to 0-4
+                elif pred_str == 'Negative':
+                    original_concept_labels[concept_name] = 0
+                elif pred_str == 'Neutral':
+                    original_concept_labels[concept_name] = 1
+                elif pred_str == 'Positive':
+                    original_concept_labels[concept_name] = 2
+    
+    # Build concept labels list, applying edits
+    concept_labels = []
+    for concept_name in concept_names:
+        if concept_name in edited_concepts:
+            # Use edited value
+            edited_value = edited_concepts[concept_name]
+            # Validate and convert if needed (handle string to int conversion)
+            if isinstance(edited_value, str):
+                if edited_value.isdigit():
+                    # If it's a string digit, check if it's 1-5 (display format) or 0-4 (API format)
+                    int_val = int(edited_value)
+                    if int_val > 4:
+                        edited_value = int_val - 1  # Convert "1"-"5" to 0-4
+                    else:
+                        edited_value = int_val
+                elif edited_value == 'Negative':
+                    edited_value = 0
+                elif edited_value == 'Neutral':
+                    edited_value = 1
+                elif edited_value == 'Positive':
+                    edited_value = 2
+                else:
+                    edited_value = int(edited_value)
+            # Ensure value is in valid range
+            if not isinstance(edited_value, int):
+                edited_value = int(edited_value)
+            if edited_value < 0 or edited_value >= n_class_attr:
+                # Clamp to valid range
+                edited_value = max(0, min(edited_value, n_class_attr - 1))
+            concept_labels.append(edited_value)
+        elif original_concept_labels and concept_name in original_concept_labels:
+            # Use original value
+            concept_labels.append(original_concept_labels[concept_name])
+        else:
+            # Default to middle value if neither original nor edited
+            concept_labels.append(n_class_attr // 2)
+    
+    # Convert concept labels to logits format
+    concept_logits = concept_labels_to_logits(concept_labels, n_attributes, n_class_attr)
+    concept_logits = concept_logits.to(model_manager.device)
+    
+    # Access the second stage model (C->Y)
+    # Check if head is End2EndModel
+    if hasattr(head, 'sec_model'):
+        sec_model = head.sec_model
+    elif hasattr(head, '_modules') and 'sec_model' in head._modules:
+        sec_model = head._modules['sec_model']
+    else:
+        raise ValueError("Cannot access sec_model from head. Head must be an End2EndModel instance.")
+    
+    # Run second stage prediction
+    sec_model.eval()
+    with torch.no_grad():
+        task_logits = sec_model(concept_logits)
+        task_probabilities = torch.softmax(task_logits, dim=-1).cpu().numpy()[0]
+        task_prediction = torch.argmax(task_logits, dim=-1).cpu().item()
+    
+    # Determine rating based on number of classes
+    num_classes = len(task_probabilities)
+    if num_classes == 2:  # Binary classification (0-1)
+        rating = task_prediction + 1  # Convert 0-1 to 1-2
+    elif num_classes == 6:  # Essay dataset (0-5 scoring)
+        rating = task_prediction + 1  # Convert 0-5 to 1-6
+    else:  # 5-class classification (0-4)
+        rating = task_prediction + 1  # Convert 0-4 to 1-5
+    
+    return {
+        'prediction': int(task_prediction),
+        'rating': int(rating),
+        'probabilities': task_probabilities.tolist(),
+        'original_prediction': original_prediction,
+        'original_rating': original_rating,
+        'edited_concepts': edited_concepts
+    }
