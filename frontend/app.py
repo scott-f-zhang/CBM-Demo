@@ -107,7 +107,7 @@ CONCEPT_FULL_NAMES = {
 
 # Utilities for results discovery and loading
 # Primary and fallback results directories
-RESULTS_DIR_PRIMARY = "/Users/scott/repos/CBM_NLP/cbm/results"
+RESULTS_DIR_PRIMARY = str((Path(__file__).resolve().parent.parent / "cbm" / "results"))
 try:
     RESULTS_DIR_FALLBACK = str((Path(__file__).resolve().parent.parent / "cbm" / "results"))
 except Exception:
@@ -467,6 +467,9 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True, e
     # Initialize session state for edited concepts if not exists
     if editable and 'edited_concepts' not in st.session_state:
         st.session_state['edited_concepts'] = {}
+    # Initialize pending_edits for temporary edits (before Regrading is clicked)
+    if editable and 'pending_edits' not in st.session_state:
+        st.session_state['pending_edits'] = {}
 
     # Color mapping for icons - handle different sentiment labels dynamically
     def get_icon_for_sentiment(sentiment: str) -> str:
@@ -515,13 +518,28 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True, e
                     top_prob = max(probs.values())
                     top_sentiment = max(probs, key=probs.get)
 
-                    # Determine if this concept has been edited
+                    # Determine if this concept has been edited (only confirmed edits show highlight)
                     edited_concepts_map = st.session_state.get('edited_concepts', {})
                     is_edited = concept_name in edited_concepts_map
 
-                    # Resolve display prediction (original vs edited)
+                    # Resolve display prediction (original vs pending vs edited)
+                    # Priority: pending_edits > edited_concepts > original
                     display_prediction = prediction
-                    if is_edited:
+                    pending_edits_map = st.session_state.get('pending_edits', {})
+                    
+                    # Check pending_edits first (user's current temporary selection)
+                    if concept_name in pending_edits_map:
+                        pending_val_idx = pending_edits_map[concept_name]
+                        sentiment_labels = list(probs.keys())
+                        are_numeric = all(str(k).isdigit() for k in sentiment_labels)
+                        if are_numeric:
+                            display_prediction = str(pending_val_idx + 1)
+                        else:
+                            if pending_val_idx == 0: display_prediction = "Negative"
+                            elif pending_val_idx == 1: display_prediction = "Neutral"
+                            elif pending_val_idx == 2: display_prediction = "Positive"
+                    elif is_edited:
+                        # Use confirmed edits if no pending edits
                         edited_val_idx = edited_concepts_map[concept_name]
                         sentiment_labels = list(probs.keys())
                         are_numeric = all(str(k).isdigit() for k in sentiment_labels)
@@ -572,11 +590,16 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True, e
                         # Create key for this concept's selectbox
                         selectbox_key = f"edit_{concept_name}_{concept_idx}"
 
-                        # Get current value (edited or original)
-                        # If edited, convert from 0-based (API) to 1-based (display)
+                        # Get current value (pending_edits > edited_concepts > original)
+                        # Priority: pending_edits > edited_concepts > original
+                        pending_value = st.session_state.get('pending_edits', {}).get(concept_name)
                         edited_value = st.session_state.get('edited_concepts', {}).get(concept_name)
-                        if edited_value is not None:
-                            # Convert from 0-based API format to 1-based display format
+                        
+                        if pending_value is not None:
+                            # Use pending edit value
+                            current_value = str(pending_value + 1) if are_numeric else prediction
+                        elif edited_value is not None:
+                            # Use confirmed edit value
                             current_value = str(edited_value + 1) if are_numeric else prediction
                         else:
                             current_value = prediction
@@ -598,19 +621,19 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True, e
                                 key=selectbox_key,
                                 label_visibility="collapsed"
                             )
-                            # Store edited value (convert "1"-"5" to 0-4 for API)
+                            # Store edited value in pending_edits (temporary, until Regrading is clicked)
                             # Note: API expects 0-based indices, but we display 1-based labels
                             selected_int = int(selected)
                             # Check if this is different from original (convert original to int for comparison)
                             original_int = int(prediction) if prediction.isdigit() else 0
                             if selected_int != original_int:
-                                if 'edited_concepts' not in st.session_state:
-                                    st.session_state['edited_concepts'] = {}
+                                if 'pending_edits' not in st.session_state:
+                                    st.session_state['pending_edits'] = {}
                                 # Convert "1"-"5" to 0-4 for API
-                                st.session_state['edited_concepts'][concept_name] = selected_int - 1
-                            elif concept_name in st.session_state.get('edited_concepts', {}):
-                                # If user reverts to original, remove from edited dict
-                                del st.session_state['edited_concepts'][concept_name]
+                                st.session_state['pending_edits'][concept_name] = selected_int - 1
+                            elif concept_name in st.session_state.get('pending_edits', {}):
+                                # If user reverts to original, remove from pending_edits
+                                del st.session_state['pending_edits'][concept_name]
                         else:
                             # For text labels, show as dropdown
                             options = sentiment_labels
@@ -621,19 +644,20 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True, e
                                 key=selectbox_key,
                                 label_visibility="collapsed"
                             )
-                            # Store edited value
+                            # Store edited value in pending_edits (temporary, until Regrading is clicked)
                             if selected != prediction:
-                                if 'edited_concepts' not in st.session_state:
-                                    st.session_state['edited_concepts'] = {}
+                                if 'pending_edits' not in st.session_state:
+                                    st.session_state['pending_edits'] = {}
                                 # Convert text label to numeric for API
                                 if selected == 'Negative':
-                                    st.session_state['edited_concepts'][concept_name] = 0
+                                    st.session_state['pending_edits'][concept_name] = 0
                                 elif selected == 'Neutral':
-                                    st.session_state['edited_concepts'][concept_name] = 1
+                                    st.session_state['pending_edits'][concept_name] = 1
                                 elif selected == 'Positive':
-                                    st.session_state['edited_concepts'][concept_name] = 2
-                            elif concept_name in st.session_state.get('edited_concepts', {}):
-                                del st.session_state['edited_concepts'][concept_name]
+                                    st.session_state['pending_edits'][concept_name] = 2
+                            elif concept_name in st.session_state.get('pending_edits', {}):
+                                # If user reverts to original, remove from pending_edits
+                                del st.session_state['pending_edits'][concept_name]
 
                     # Add bar chart with in-bar labels inside the card
                     # Build dataframe; if labels are numeric 1..5, ensure all five categories appear
@@ -670,8 +694,11 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True, e
                 unsafe_allow_html=True,
             )
 
-    # Add "Repredict" button if editable and there are edits
-    if editable and st.session_state.get('edited_concepts'):
+    # Add "Repredict" button if editable and there are edits (either pending or confirmed)
+    # Show buttons if there are any edits (pending_edits or edited_concepts)
+    has_pending_edits = bool(st.session_state.get('pending_edits', {}))
+    has_confirmed_edits = bool(st.session_state.get('edited_concepts', {}))
+    if editable and (has_pending_edits or has_confirmed_edits):
         # Add description text above buttons
         st.markdown(
             """
@@ -687,13 +714,19 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True, e
         col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
         with col2:
             if st.button("Regrading", use_container_width=True, type="primary"):
-                # Call API with edited concepts
+                # Copy pending_edits to edited_concepts (confirm the edits)
+                pending_edits = st.session_state.get('pending_edits', {})
+                if pending_edits:
+                    st.session_state['edited_concepts'] = pending_edits.copy()
+                
+                # Call API with edited concepts (use pending_edits if available, otherwise edited_concepts)
+                concepts_to_use = pending_edits if pending_edits else st.session_state.get('edited_concepts', {})
                 with st.spinner("Repredicting with edited concepts..."):
                     result = predict_with_edited_concepts(
                         backend_url,
                         original_text,
                         model_name,
-                        st.session_state['edited_concepts']
+                        concepts_to_use
                     )
                     if result:
                         # Store result in session state for display
@@ -705,9 +738,13 @@ def display_concept_cards(concept_predictions: list, show_header: bool = True, e
         # Show reset button
         with col3:
             if st.button("Reset Edits", use_container_width=True):
+                # Clear all edit-related state
                 st.session_state['edited_concepts'] = {}
+                st.session_state['pending_edits'] = {}
                 if 'reprediction_result' in st.session_state:
                     del st.session_state['reprediction_result']
+                if 'just_regraded' in st.session_state:
+                    st.session_state['just_regraded'] = False
                 rerun()
 
 
@@ -930,6 +967,8 @@ def main():
                                 # If no edits, clear any existing edits
                                 if 'edited_concepts' in st.session_state:
                                     del st.session_state['edited_concepts']
+                                if 'pending_edits' in st.session_state:
+                                    del st.session_state['pending_edits']
                                 if 'reprediction_result' in st.session_state:
                                     del st.session_state['reprediction_result']
                                 st.session_state['is_pinned_loaded'] = True
@@ -1003,6 +1042,8 @@ def main():
                             # Clear any pinned/edit specific state when loading a regular history item
                             if 'edited_concepts' in st.session_state:
                                 del st.session_state['edited_concepts']
+                            if 'pending_edits' in st.session_state:
+                                del st.session_state['pending_edits']
                             if 'reprediction_result' in st.session_state:
                                 del st.session_state['reprediction_result']
                             if 'is_pinned_loaded' in st.session_state:
