@@ -73,13 +73,15 @@ CONCEPT_FULL_NAMES = {
     "FR": "Flow/Readability",
 
     # Essay Dataset concepts
-    "TC": "Task Completion",
-    "UE": "Understanding/Explanation",
-    "OC": "Organization/Clarity",
-    "GM": "Grammar/Mechanics",
-    "VA": "Vocabulary/Accuracy",
-    "SV": "Support/Validation",
-    "CTD": "Critical Thinking/Depth",
+    "TC": "Thesis Clarity",
+    "UE": "Use of Evidence",
+    "OC": "Organization & Coherence",
+    "GM": "Grammar and Mechanics",
+    "VA": "Vocabulary Appropriateness",
+    "SV": "Sentence Variety",
+    "CTD": "Critical Thinking Depth",
+    "FR": "Fluency/Readability",
+    "RC": "Relevance of Content",
 
     # CEBaB Dataset concepts
     "Food": "Food Quality",
