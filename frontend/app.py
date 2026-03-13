@@ -38,24 +38,24 @@ def rerun():
 AVAILABLE_MODES = ["joint"]
 
 def get_available_models_from_filesystem() -> list:
-    """Dynamically get available models from saved_models/essay directory."""
+    """Dynamically get available models from the saved_models directory tree."""
     try:
-        # Use relative path from this file (frontend/app.py) -> project_root -> saved_models/essay
-        models_dir = str(Path(__file__).resolve().parent.parent / "saved_models" / "essay")
+        saved_models_root = Path(__file__).resolve().parent.parent / "saved_models"
     except Exception:
-        models_dir = "saved_models/essay"
+        saved_models_root = Path("saved_models")
 
-    if not os.path.exists(models_dir):
+    if not saved_models_root.exists():
         return ["roberta-base", "bert-base-uncased"]  # fallback
 
-    # Get all directories in the models folder
-    model_dirs = [d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d))]
+    model_dirs = set()
+    for dataset_dir in saved_models_root.iterdir():
+        if not dataset_dir.is_dir() or dataset_dir.name.startswith('.'):
+            continue
+        for model_dir in dataset_dir.iterdir():
+            if model_dir.is_dir() and not model_dir.name.startswith('.'):
+                model_dirs.add(model_dir.name)
 
-    # Filter out hidden directories and sort
-    model_dirs = [d for d in model_dirs if not d.startswith('.')]
-    model_dirs.sort()
-
-    return model_dirs if model_dirs else ["roberta-base", "bert-base-uncased"]  # fallback
+    return sorted(model_dirs) if model_dirs else ["roberta-base", "bert-base-uncased"]  # fallback
 
 # Get available models dynamically
 AVAILABLE_MODELS = get_available_models_from_filesystem()

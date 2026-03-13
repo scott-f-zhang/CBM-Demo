@@ -36,7 +36,7 @@ from db import (
 # Manual configuration
 # =========================
 # Select which dataset's models to use (matches folder under `saved_models/`)
-CBM_DATASET = "essay"  # e.g., "essay", "imdb", "cebab"
+CBM_DATASET = "original"  # e.g., "original", "essay", "imdb", "cebab"
 
 # Make dataset selection visible to the model loader
 os.environ["CBM_DATASET"] = CBM_DATASET
@@ -46,10 +46,22 @@ PROJECT_ROOT = Path(__file__).parent.parent
 DB_PATH = str(PROJECT_ROOT / "backend" / "data" / "app.db")
 
 def discover_available_models(dataset: str) -> List[str]:
-    base_dir = PROJECT_ROOT / "saved_models" / dataset
-    if not base_dir.exists():
+    saved_models_root = PROJECT_ROOT / "saved_models"
+    if not saved_models_root.exists():
         return []
-    return sorted([p.name for p in base_dir.iterdir() if p.is_dir()])
+
+    dataset_dir = saved_models_root / dataset
+    if dataset_dir.exists():
+        return sorted([p.name for p in dataset_dir.iterdir() if p.is_dir()])
+
+    discovered_models = set()
+    for possible_dataset_dir in saved_models_root.iterdir():
+        if not possible_dataset_dir.is_dir():
+            continue
+        for model_dir in possible_dataset_dir.iterdir():
+            if model_dir.is_dir():
+                discovered_models.add(model_dir.name)
+    return sorted(discovered_models)
 
 
 # Create FastAPI app
